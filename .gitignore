@@ -37,6 +37,7 @@ compile_commands.json
 *.cmake.user
 *.o
 *.obj
+!car_vision/models/*.obj
 *.pdb
 
 # Embedded firmware build outputs
