@@ -13,14 +13,14 @@ def generate_launch_description():
         ])
     )
 
-    #usb_cam
-    usb_cam_launch = IncludeLaunchDescription(
+    #camera (astra depth camera)
+    camera_launch = IncludeLaunchDescription(
         PathJoinSubstitution([
             FindPackageShare('car_base'),
-            'launch/usb_camera.launch.py'
-        ])
+            'launch/car_camera.launch.py'
+        ]),
+        launch_arguments={'camera_type': 'depth'}.items()
     )
-
 
     #rosbridge_websocket
     rosbridge_launch = IncludeLaunchDescription(
@@ -40,7 +40,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         base_serial_launch,
-        usb_cam_launch,
+        camera_launch,
         rosbridge_launch,
         web_video_server_node
     ])
