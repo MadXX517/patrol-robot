@@ -1,0 +1,108 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+.colcon/
+
+# ROS bags and runtime recordings
+rosbag2_*/
+*.bag
+*.bag.active
+*.db3
+*.mcap
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# CMake and native build leftovers
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Testing/
+compile_commands.json
+*.cmake.user
+*.o
+*.obj
+*.pdb
+
+# Embedded firmware build outputs
+*.elf
+*.hex
+*.map
+*.lst
+*.d
+.pio/
+
+# Logs, temp files, and local caches
+*.log
+logs/
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+
+# ML / experiment outputs
+runs/
+wandb/
+tensorboard/
+events.out.tfevents*
+*.engine
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+secrets.*
+*.secret
+*_secret.*
+*_secrets.*
+
+# Archives and transferred packages
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# IDE / editor local state
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Generated documentation outputs
+site/
+docs/_build/

@@ -1,0 +1,73 @@
+from setuptools import find_packages, setup
+from glob import glob
+import os
+
+package_name = 'car_vision'
+
+setup(
+    name=package_name,
+    version='0.0.0',
+    packages=find_packages(exclude=['test']),
+    package_data={
+        'car_vision': [
+            'mediapipe/model/*',
+            'weights/*',
+            'model/*',
+            'models/*',
+        ],
+    },
+    data_files=[
+        ('share/ament_index/resource_index/packages',
+            ['resource/' + package_name]),
+        ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'resource'), glob('resource/**')),
+    ],
+    install_requires=['setuptools'],
+    zip_safe=True,
+    maintainer='ubuntu',
+    maintainer_email='ubuntu@todo.todo',
+    description='TODO: Package description',
+    license='TODO: License declaration',
+    tests_require=['pytest'],
+    entry_points={
+        'console_scripts': [
+            'label_pick = car_vision.label_pick:main',
+            'run_map = car_vision.run_map:main',
+            'run_map_d = car_vision.run_map_d:main',
+            'nav2_pick = car_vision.nav2_pick:main',
+            'color_test = car_vision.color_test:main',
+            'lidar_controller = car_vision.lidar_controller:main',
+            'line_following = car_vision.line_following:main',
+            'color_track = car_vision.color_track:main',
+            'color_track_arm = car_vision.color_track_arm:main',
+            'ar_tag = car_vision.ar_tag:main',
+            'hand_follow = car_vision.hand_follow:main',
+            'hand_gesture = car_vision.hand_gesture:main',
+            'hand_follow_arm = car_vision.hand_follow_arm:main',
+            'hand_gesture_arm = car_vision.hand_gesture_arm:main',
+            'finger_draw = car_vision.finger_draw:main',
+            'finger_control = car_vision.finger_control:main',
+            'face_tracking = car_vision.face_tracking:main',
+            'body_control = car_vision.body_control:main',
+            'fall_down_detect = car_vision.fall_down_detect:main',
+            'kcf_track = car_vision.kcf_track:main',
+            'nav2_goals = car_vision.nav2_goals:main',
+            'qrcode_create = car_vision.qrcode_create:main',
+            'qrcode_detecter = car_vision.qrcode_detecter:main',
+            'depth_rgbd = car_vision.depth_rgbd:main',
+            'distance_measure = car_vision.distance_measure:main',
+            'tag_stackup = car_vision.tag_stackup:main',
+            'tag_stackup_d = car_vision.tag_stackup_d:main',
+            'color_rect_pick = car_vision.color_rect_pick:main',
+            'color_rect_pick_d = car_vision.color_rect_pick_d:main',
+            'object_track = car_vision.object_track:main',
+            'dynamic_space_grab = car_vision.dynamic_space_grab:main',
+            'num_pick = car_vision.num_pick:main',
+            'num_pick_d = car_vision.num_pick_d:main',
+            'garbage_class = car_vision.garbage_class:main',
+            'garbage_class_d = car_vision.garbage_class_d:main',
+            'self_drive = car_vision.self_drive:main',
+        ],
+    },
+)

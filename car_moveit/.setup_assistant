@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: car_urdf
+    relative_path: urdf/yeahbot_c2.urdf
+  srdf:
+    relative_path: config/yeahbot_c2.srdf
+  package_settings:
+    author_name: yeahbotros
+    author_email: 2838978785@qq.com
+    generated_timestamp: 1766026649
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity

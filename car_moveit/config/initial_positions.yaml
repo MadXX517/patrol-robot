@@ -1,0 +1,14 @@
+# Default initial positions for yeahbot_c2's ros2_control fake system
+
+initial_positions:
+  arm_0_joint: 0
+  arm_1_joint: 0
+  arm_2_joint: 0
+  arm_3_joint: 0
+  arm_4_joint: 0
+  arm_5_1_joint: 0
+  arm_5_2_joint: 0
+  arm_5_3_joint: 0
+  arm_5_4_joint: 0
+  arm_5_5_joint: 0
+  arm_5_6_joint: 0

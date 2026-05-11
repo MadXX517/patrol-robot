@@ -1,0 +1,549 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="yeahbot_c21_pi">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-0.00201708248049406 -0.000517165622559546 0.0574620880275668"
+        rpy="0 0 0" />
+      <mass
+        value="2.20298757920811" />
+      <inertia
+        ixx="0.00125831475576766"
+        ixy="5.45518780345721E-06"
+        ixz="7.37151149127403E-06"
+        iyy="0.00164922314041332"
+        iyz="-1.8894851651191E-06"
+        izz="0.00245258635857651" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.411764705882353 0.411764705882353 0.411764705882353 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="imu_link">
+    <inertial>
+      <origin
+        xyz="-1.24077427151592E-05 -0.00716717736537498 -0.010326432965284"
+        rpy="0 0 0" />
+      <mass
+        value="0.0370499748531924" />
+      <inertia
+        ixx="9.48782215617797E-06"
+        ixy="6.72090333991412E-09"
+        ixz="7.80615146406467E-10"
+        iyy="4.36544577953432E-06"
+        iyz="5.84243702680309E-09"
+        izz="1.33425192423164E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/imu_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/imu_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="imu_joint"
+    type="fixed">
+    <origin
+      xyz="-0.0531224725067789 0.019602951558034 0.105986156972316"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="imu_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="lidar_link">
+    <inertial>
+      <origin
+        xyz="0.0118343507191906 -0.000843971068699656 -0.00893784406972677"
+        rpy="0 0 0" />
+      <mass
+        value="0.0789253203635774" />
+      <inertia
+        ixx="2.10517155072168E-05"
+        ixy="-2.59801461019636E-08"
+        ixz="-4.48833690552516E-07"
+        iyy="2.503006323579E-05"
+        iyz="1.55042425853387E-08"
+        izz="4.37467459693848E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/lidar_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/lidar_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="lidar_joint"
+    type="fixed">
+    <origin
+      xyz="0.085342995575516 -0.000107123052722424 0.108900000000002"
+      rpy="0 0 3.14159265358979" />
+    <parent
+      link="base_link" />
+    <child
+      link="lidar_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="screen_link">
+    <inertial>
+      <origin
+        xyz="0.00441800744719006 0.000721098858298574 -0.00335521087898509"
+        rpy="0 0 0" />
+      <mass
+        value="0.139070717624423" />
+      <inertia
+        ixx="0.0003945352527011"
+        ixy="-1.35938752338478E-06"
+        ixz="-5.94948036566472E-05"
+        iyy="0.000127284840104322"
+        iyz="-1.94140658191353E-06"
+        izz="0.000351226577452035" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/screen_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.411764705882353 0.411764705882353 0.411764705882353 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/screen_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="screen_joint"
+    type="fixed">
+    <origin
+      xyz="-0.109554809534287 0 0.18196647176225"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="screen_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="arm_0_link">
+    <inertial>
+      <origin
+        xyz="0.00134248416264109 5.37497959988142E-05 0.0114405790547569"
+        rpy="0 0 0" />
+      <mass
+        value="0.0249962101268042" />
+      <inertia
+        ixx="3.54007034300196E-06"
+        ixy="-8.57001445189149E-14"
+        ixz="1.17941908325283E-09"
+        iyy="3.22782846861974E-06"
+        iyz="1.49435565717124E-15"
+        izz="6.269755057348E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/arm_0_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.149019607843137 0.149019607843137 0.149019607843137 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/arm_0_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="arm_0_joint"
+    type="revolute">
+    <origin
+      xyz="0.011222 0 0.1493"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="arm_0_link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0.785"
+      upper="-0.785"
+      effort="100"
+      velocity="1" />
+  </joint>
+  <link
+    name="camera_link">
+    <inertial>
+      <origin
+        xyz="-0.0217737507150947 0.000425391347005033 -0.00559166022223875"
+        rpy="0 0 0" />
+      <mass
+        value="0.225785696474304" />
+      <inertia
+        ixx="0.000408639437053481"
+        ixy="3.04590104410847E-08"
+        ixz="8.89329488347714E-08"
+        iyy="4.93915099294842E-05"
+        iyz="-3.95865740282863E-09"
+        izz="0.000430299434582024" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/camera_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/camera_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="camera_joint"
+    type="fixed">
+    <origin
+      xyz="0.0441052595665885 0.000172001936224742 0.0681449488553636"
+      rpy="0 0 0" />
+    <parent
+      link="arm_0_link" />
+    <child
+      link="camera_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="wheel_lf_link">
+    <inertial>
+      <origin
+        xyz="1.02205402835454E-07 -0.0109640157341354 -4.52802860526069E-07"
+        rpy="0 0 0" />
+      <mass
+        value="0.149720169073326" />
+      <inertia
+        ixx="6.8397294914088E-05"
+        ixy="1.24963769591879E-11"
+        ixz="5.68757400845442E-10"
+        iyy="0.000109193414887083"
+        iyz="-5.04349519188193E-10"
+        izz="6.84002090632343E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_lf_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_lf_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="wheel_lf_joint"
+    type="continuous">
+    <origin
+      xyz="0.084765 0.11633 0.0393"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="wheel_lf_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="3.14"
+      upper="-3.14"
+      effort="100"
+      velocity="1" />
+  </joint>
+  <link
+    name="wheel_rf_link">
+    <inertial>
+      <origin
+        xyz="2.35543067869659E-07 0.0109641912903501 3.48178443333735E-07"
+        rpy="0 0 0" />
+      <mass
+        value="0.149717148628034" />
+      <inertia
+        ixx="6.83967465049843E-05"
+        ixy="-4.91979625838277E-10"
+        ixz="2.94273450633899E-10"
+        iyy="0.000109188700101397"
+        iyz="-6.20465094946149E-10"
+        izz="6.83967026899844E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_rf_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_rf_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="wheel_rf_joint"
+    type="continuous">
+    <origin
+      xyz="0.084765 -0.11633 0.0393"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="wheel_rf_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="3.14"
+      upper="-3.14"
+      effort="100"
+      velocity="1" />
+  </joint>
+  <link
+    name="wheel_lb_link">
+    <inertial>
+      <origin
+        xyz="-2.72972162859708E-07 -0.0109641896498985 -3.45282314254125E-07"
+        rpy="0 0 0" />
+      <mass
+        value="0.149717186499215" />
+      <inertia
+        ixx="6.83965592857652E-05"
+        ixy="-4.67908491184829E-10"
+        ixz="2.28982918059817E-10"
+        iyy="0.000109188713772428"
+        iyz="-6.41854054411219E-10"
+        izz="6.83969236052175E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_lb_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_lb_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="wheel_lb_joint"
+    type="continuous">
+    <origin
+      xyz="-0.093228 0.11633 0.0393"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="wheel_lb_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="3.14"
+      upper="-3.14"
+      effort="100"
+      velocity="1" />
+  </joint>
+  <link
+    name="wheel_rb_link">
+    <inertial>
+      <origin
+        xyz="-1.02185122058396E-07 0.01096401573409 -4.528072005891E-07"
+        rpy="0 0 0" />
+      <mass
+        value="0.149720169073934" />
+      <inertia
+        ixx="6.83972949244701E-05"
+        ixy="1.25204826150917E-11"
+        ixz="-5.68734324525541E-10"
+        iyy="0.000109193414887782"
+        iyz="5.04343934482516E-10"
+        izz="6.84002090537243E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_rb_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://car_urdf/meshes/yeahbot_c21_pi/wheel_rb_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="wheel_rb_joint"
+    type="continuous">
+    <origin
+      xyz="-0.0932277713644018 -0.116333333333 0.0392999937123047"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="wheel_rb_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="3.14"
+      upper="-3.14"
+      effort="100"
+      velocity="1" />
+  </joint>
+</robot>
