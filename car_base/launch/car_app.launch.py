@@ -13,6 +13,14 @@ def generate_launch_description():
         ])
     )
 
+    #body_control
+    body_control_launch = IncludeLaunchDescription(
+        PathJoinSubstitution([
+            FindPackageShare('car_vision'),
+            'launch/body_control.launch.py'
+        ])
+    )
+
     #camera (astra depth camera)
     camera_launch = IncludeLaunchDescription(
         PathJoinSubstitution([
@@ -40,6 +48,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         base_serial_launch,
+        body_control_launch,
         camera_launch,
         rosbridge_launch,
         web_video_server_node

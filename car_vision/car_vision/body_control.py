@@ -130,13 +130,32 @@ class BodyControlNode(Node):
         self.create_subscription(Image, '/camera/color/image_raw' , self.image_callback, 1)
         self.create_subscription(Image, '/usb_cam/image_raw' , self.image_callback, 1)
         self.pub_vel.publish(Twist())
+        self.result_publisher = self.create_publisher(Image, '~/image_result', 1)
+        self.is_active = False
 
         threading.Thread(target=self.main, daemon=True).start()
         self.create_service(Trigger, '~/init_finish', self.get_node_state)
+        self.create_service(Trigger, '~/enter', self.enter_srv_callback)
+        self.create_service(Trigger, '~/exit', self.exit_srv_callback)
         self.get_logger().info('\033[1;32m%s\033[0m' % 'start')
 
     def get_node_state(self, request, response):
         response.success = True
+        return response
+
+    def enter_srv_callback(self, request, response):
+        self.get_logger().info('\033[1;32m%s\033[0m' % 'body_control enter')
+        self.is_active = True
+        response.success = True
+        response.message = 'enter'
+        return response
+
+    def exit_srv_callback(self, request, response):
+        self.get_logger().info('\033[1;32m%s\033[0m' % 'body_control exit')
+        self.is_active = False
+        self.pub_vel.publish(Twist())
+        response.success = True
+        response.message = 'exit'
         return response
 
     def shutdown(self, signum, frame):
@@ -270,11 +289,8 @@ class BodyControlNode(Node):
                 result_image = cv2.flip(cv2.cvtColor(image, cv2.COLOR_RGB2BGR), 1)
             self.fps.update()
             result_image = self.fps.show_fps(result_image)
-            _imshow_fit(self.name, result_image)
-            key = cv2.waitKey(1)
-            if key == ord('q') or key == 27:  # 按q或者esc退出(press Q or Esc to exit)
-                self.pub_vel.publish(Twist())
-                self.running = False
+            if self.is_active:
+                self.result_publisher.publish(self.bridge.cv2_to_imgmsg(result_image, 'bgr8'))
 
         rclpy.shutdown()
 
