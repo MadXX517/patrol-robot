@@ -46,8 +46,13 @@ def create_qrcode(data, file_name):
     cv2.imwrite(file_name, opencv_img)
     print('save', data, file_name)
 
-if __name__ == '__main__':
+
+def main():
     file_path = os.getcwd()
     out_img = file_path + '/myQRcode.jpg'
     qrcode_text = input("Please input text:")
     create_qrcode(qrcode_text, out_img)
+
+
+if __name__ == '__main__':
+    main()

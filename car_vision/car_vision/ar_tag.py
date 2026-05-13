@@ -29,8 +29,11 @@ def _imshow_fit(title, img, max_w=1024, max_h=600):
 
 
 
-parent_dir = Path(__file__).parent
-MODEL_PATH = parent_dir / 'models'
+try:
+    from ament_index_python.packages import get_package_share_directory
+    MODEL_PATH = Path(get_package_share_directory('car_vision')) / 'models'
+except Exception:
+    MODEL_PATH = Path(__file__).resolve().parents[1] / 'models'
 
 OBJP = np.array([[-1, -1,  0],
                  [ 1, -1,  0],
