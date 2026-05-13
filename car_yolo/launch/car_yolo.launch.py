@@ -26,7 +26,7 @@ def launch_setup(context):
             #"model": "garbage_classification",
             "model": "traffic_640n_7",
             #"model": "yolov5s",
-            "image_topic": "/camera/image_raw",
+            "image_topic": "/camera/color/image_raw",
             #"camera_info_topic": "/camera/camera_info",
             #"camera_info_file": f"{package_share_directory}/config/camera_info.yaml",
             "show_result": True,
