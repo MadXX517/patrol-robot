@@ -22,6 +22,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'resource'), glob('resource/**')),
+        (os.path.join('share', package_name, 'models'), glob('models/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -32,7 +33,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'label_pick = car_vision.label_pick:main',
+            'driver = car_vision.driver:main',
             'run_map = car_vision.run_map:main',
             'run_map_d = car_vision.run_map_d:main',
             'nav2_pick = car_vision.nav2_pick:main',
@@ -67,7 +68,7 @@ setup(
             'num_pick_d = car_vision.num_pick_d:main',
             'garbage_class = car_vision.garbage_class:main',
             'garbage_class_d = car_vision.garbage_class_d:main',
-            'self_drive = car_vision.self_drive:main',
+            'self_drive = car_vision.self_driver:main',
         ],
     },
 )
