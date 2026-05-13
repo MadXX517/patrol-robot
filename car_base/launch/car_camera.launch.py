@@ -29,7 +29,7 @@ def generate_launch_description():
     # 声明一个参数，用于判断启动哪种相机
     camera_type_arg = DeclareLaunchArgument(
         'camera_type',
-        default_value='usb',  # 默认值为 'usb'
+        default_value='depth',  # 默认值为 'depth'
         description='Type of camera to launch (depth or usb)'
     )
 
