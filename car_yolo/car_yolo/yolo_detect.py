@@ -46,12 +46,6 @@ class YoloV5Ros2(Node):
         self.declare_parameter("pub_result_img", False, ParameterDescriptor(
             name="pub_result_img", description="Whether to publish detection result images, default: False"))
 
-        self.declare_parameter("result_img_width", 1024, ParameterDescriptor(
-            name="result_img_width", description="Width to resize published result image, default: 1024"))
-
-        self.declare_parameter("result_img_height", 600, ParameterDescriptor(
-            name="result_img_height", description="Height to resize published result image, default: 600"))
-
         self.create_service(Trigger, '/yolov5/start', self.start_srv_callback)
         self.create_service(Trigger, '/yolov5/stop', self.stop_srv_callback) 
         self.create_service(Trigger, '~/init_finish', self.get_node_state)
@@ -77,8 +71,6 @@ class YoloV5Ros2(Node):
 
         self.show_result = self.get_parameter('show_result').value
         self.pub_result_img = self.get_parameter('pub_result_img').value
-        self.result_img_width = int(self.get_parameter('result_img_width').value)
-        self.result_img_height = int(self.get_parameter('result_img_height').value)
 
     def get_node_state(self, request, response):
         response.success = True
@@ -168,13 +160,13 @@ class YoloV5Ros2(Node):
         if self.show_result:
             self.fps.update()
             image = self.fps.show_fps(image)
-            cv2.imshow('result', cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+            display_img = cv2.resize(image, (self.result_img_width, self.result_img_height),
+                                     interpolation=cv2.INTER_AREA)
+            cv2.imshow('result', cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
         if self.pub_result_img:
-            result_img = cv2.resize(image, (self.result_img_width, self.result_img_height),
-                                    interpolation=cv2.INTER_AREA)
-            result_img_msg = self.bridge.cv2_to_imgmsg(result_img, encoding="rgb8")
+            result_img_msg = self.bridge.cv2_to_imgmsg(image, encoding="rgb8")
             result_img_msg.header = msg.header
             self.result_img_pub.publish(result_img_msg)
         if len(categories) > 0:
