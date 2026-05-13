@@ -56,8 +56,8 @@ def generate_launch_description():
     )
     yolo_model_arg = DeclareLaunchArgument(
         'yolo_model',
-        default_value='traffic_640n_7',
-        description='YOLO model name in car_yolo config'
+        default_value='yolov5s',
+        description='YOLO model name in car_yolo config (yolov5s = COCO 80 classes; traffic_640n_7 = traffic scene only)'
     )
     yolo_show_result_arg = DeclareLaunchArgument(
         'yolo_show_result',
