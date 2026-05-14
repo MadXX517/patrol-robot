@@ -1,7 +1,3 @@
-from math import frexp
-from traceback import print_tb
-from torch import imag
-from yolov5 import YOLOv5
 import rclpy
 import car_yolo.fps as fps
 from rclpy.node import Node
@@ -11,11 +7,9 @@ from vision_msgs.msg import Detection2DArray, ObjectHypothesisWithPose, Detectio
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
-import yaml
-#from sdk import common
 
-from car_yolo.cv_tool import px2xy
 import os
+from car_yolo.rknn_yolov5 import RKNNYoloV5, load_class_names
 from interfaces.msg import ObjectInfo, ObjectsInfo
 
 from std_srvs.srv import Trigger
@@ -30,12 +24,34 @@ class YoloV5Ros2(Node):
         super().__init__('car_yolo')
         self.get_logger().info(f"Current ROS 2 distribution: {ros_distribution}")
         self.fps = fps.FPS()
+        self.start = True
 
-        self.declare_parameter("device", "cuda", ParameterDescriptor(
-            name="device", description="Compute device selection, default: cpu, options: cuda:0"))
+        self.declare_parameter("backend", "rknn", ParameterDescriptor(
+            name="backend", description="Inference backend: rknn or torch"))
+
+        self.declare_parameter("device", "cpu", ParameterDescriptor(
+            name="device", description="Torch compute device when backend=torch"))
 
         self.declare_parameter("model", "yolov5s", ParameterDescriptor(
-            name="model", description="Default model selection: yolov5s"))
+            name="model", description="Model base name in car_yolo/config"))
+
+        self.declare_parameter("rknn_model", "", ParameterDescriptor(
+            name="rknn_model", description="RKNN model file name or absolute path; empty uses <model>.rknn"))
+
+        self.declare_parameter("class_names", "", ParameterDescriptor(
+            name="class_names", description="Comma-separated class names for RKNN output"))
+
+        self.declare_parameter("img_size", 640, ParameterDescriptor(
+            name="img_size", description="YOLO RKNN input size"))
+
+        self.declare_parameter("conf_thres", 0.25, ParameterDescriptor(
+            name="conf_thres", description="YOLO confidence threshold"))
+
+        self.declare_parameter("iou_thres", 0.45, ParameterDescriptor(
+            name="iou_thres", description="YOLO NMS IoU threshold"))
+
+        self.declare_parameter("npu_core", "auto", ParameterDescriptor(
+            name="npu_core", description="RKNN NPU core mask: auto, 0, 1, 2, 0_1, 0_1_2"))
 
         self.declare_parameter("image_topic", "/camera/color/image_raw", ParameterDescriptor(
             name="image_topic", description="Image topic, default: /camera/color/image_raw"))
@@ -57,9 +73,7 @@ class YoloV5Ros2(Node):
         self.create_service(Trigger, '~/init_finish', self.get_node_state)
 
         # Load the model.
-        model_path = package_share_directory + "/config/" + self.get_parameter('model').value + ".pt"
-        device = self.get_parameter('device').value
-        self.yolov5 = YOLOv5(model_path=model_path, device=device)
+        self.yolov5 = self._load_detector()
 
         # Create publishers.
         self.yolo_result_pub = self.create_publisher(Detection2DArray, "yolo_result", 10)
@@ -80,6 +94,45 @@ class YoloV5Ros2(Node):
         self.display_width = int(self.get_parameter('display_width').value)
         self.display_height = int(self.get_parameter('display_height').value)
 
+    def _load_detector(self):
+        backend = str(self.get_parameter('backend').value).lower()
+        model_name = str(self.get_parameter('model').value)
+
+        if backend == 'rknn':
+            rknn_model = str(self.get_parameter('rknn_model').value or '')
+            model_path = self._resolve_model_path(rknn_model or (model_name + '.rknn'))
+            names = load_class_names(
+                package_share_directory,
+                model_name,
+                str(self.get_parameter('class_names').value or ''),
+            )
+            detector = RKNNYoloV5(
+                model_path=model_path,
+                class_names=names,
+                img_size=int(self.get_parameter('img_size').value),
+                conf_thres=float(self.get_parameter('conf_thres').value),
+                iou_thres=float(self.get_parameter('iou_thres').value),
+                npu_core=str(self.get_parameter('npu_core').value),
+            )
+            self.get_logger().info('YOLO backend=rknn model=%s' % model_path)
+            return detector
+
+        if backend == 'torch':
+            from yolov5 import YOLOv5
+
+            model_path = self._resolve_model_path(model_name + '.pt')
+            device = self.get_parameter('device').value
+            self.get_logger().info('YOLO backend=torch model=%s device=%s' % (model_path, device))
+            return YOLOv5(model_path=model_path, device=device)
+
+        raise ValueError('Unsupported YOLO backend: %s' % backend)
+
+    @staticmethod
+    def _resolve_model_path(model_file):
+        if os.path.isabs(model_file):
+            return model_file
+        return os.path.join(package_share_directory, 'config', model_file)
+
     def get_node_state(self, request, response):
         response.success = True
         return response
@@ -99,6 +152,9 @@ class YoloV5Ros2(Node):
         return response
 
     def image_callback(self, msg: Image):
+        if not self.start:
+            return
+
         # 5. Detect and publish results.
         image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
         detect_result = self.yolov5.predict(image)
@@ -113,8 +169,15 @@ class YoloV5Ros2(Node):
         scores = predictions[:, 4]
         categories = predictions[:, 5]
 
+        objects_info = []
+        h, w = image.shape[:2]
+
         for index in range(len(categories)):
-            name = detect_result.names[int(categories[index])]
+            category = int(categories[index])
+            if category < len(detect_result.names):
+                name = detect_result.names[category]
+            else:
+                name = 'class_%d' % category
             detection2d = Detection2D()
             detection2d.id = name
             x1, y1, x2, y2 = boxes[index]
@@ -149,9 +212,6 @@ class YoloV5Ros2(Node):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 cv2.waitKey(1)
 
-            objects_info = []
-            h, w = image.shape[:2]
-
             object_info = ObjectInfo()
             object_info.class_name = name
             object_info.box = [int(coord) for coord in [x1, y1, x2, y2]]
@@ -160,6 +220,7 @@ class YoloV5Ros2(Node):
             object_info.height = h
             objects_info.append(object_info)
 
+        if objects_info:
             object_msg = ObjectsInfo()
             object_msg.objects = objects_info
             self.object_pub.publish(object_msg)
@@ -183,8 +244,14 @@ class YoloV5Ros2(Node):
 
 def main():
     rclpy.init()
-    rclpy.spin(YoloV5Ros2())
-    rclpy.shutdown()
+    node = YoloV5Ros2()
+    try:
+        rclpy.spin(node)
+    finally:
+        if hasattr(node.yolov5, 'release'):
+            node.yolov5.release()
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == "__main__":
     main()
