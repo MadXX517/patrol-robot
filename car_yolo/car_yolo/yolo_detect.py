@@ -210,7 +210,6 @@ class YoloV5Ros2(Node):
                 cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(image, f"{name}:{obj_pose.hypothesis.score:.2f}", (x1, y1),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                cv2.waitKey(1)
 
             object_info = ObjectInfo()
             object_info.class_name = name

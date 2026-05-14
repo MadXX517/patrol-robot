@@ -1,79 +1,168 @@
-# car_yolo 的 RKNN / rkNPU 推理说明
+# car_yolo RKNN / rkNPU 部署记录
 
-这个包现在支持两种 YOLOv5 推理后端：
+本文记录 `car_yolo` 从原来的 PyTorch CPU 推理切换到 RKNN / rkNPU 推理的完整流程。当前已在 ELF 2 / RK3588 小车上跑通：
 
-- `backend:=rknn`：使用 Rockchip RKNN Runtime，在 RK 板子的 NPU 上推理。当前 launch 默认使用这个后端。
-- `backend:=torch`：保留原来的 PyTorch YOLOv5 推理路径，只作为临时回退或对照测试使用。
+```text
+相机 -> YOLOv5s RKNN/NPU -> /car_yolo/object_detect
+-> car_report 事件记录 + 截图留证
+-> /car_report/event
+-> car_notify 钉钉机器人推送
+```
 
-注意：在小车板子上运行程序，不等于一定用了 NPU。只有加载 `.rknn` 模型，并且代码走 `RKNNLite` 推理，才算使用 rkNPU。
+已验证的钉钉事件包含 `person` 类别、置信度、bbox、截图大小和截图路径，说明推理、事件记录、截图保存、消息通知链路已经闭环。
 
-## 1. 上板前必须准备的文件
+## 1. 当前结论
 
-仓库现在只有 `.pt` 权重，RKNN Runtime 不能直接运行 `.pt`。上车前需要先把模型转换成 `.rknn`，并放到：
+- 小车芯片平台：`rk3588`
+- 板端运行库：`rknn-toolkit-lite2` / RKNN Runtime `2.1.0`
+- 模型转换工具：RKNN Toolkit2 `2.3.2`
+- 当前基线模型：`yolov5s.rknn`
+- 可选交通模型：`traffic_640n_7.rknn`
+- 当前默认启动策略：无 GUI，`show_result=false`，`pub_result_img=false`
 
-```bash
+注意：`yolov5s` 是 COCO 80 类模型，用来复现原 CPU 版本的 `person/chair/laptop` 等通用检测效果。`traffic_640n_7` 是 7 类交通场景模型，类别是 `Keep_Straight_Sign`、`Turn_Right_Sign`、`Parking_Sign`、`Sidewalk_Sign`、`Crossing`、`Green_Light`、`Turn_R`，不能用于复现 `person` 检测。
+
+## 2. 文件说明
+
+源码中保留 `.pt` 权重：
+
+```text
+car_yolo/config/yolov5s.pt
+car_yolo/config/traffic_640n_7.pt
+```
+
+转换后需要得到：
+
+```text
+car_yolo/config/yolov5s.rknn
 car_yolo/config/traffic_640n_7.rknn
 ```
 
-如果你是在 ROS2 工作区里 `colcon build` 后运行，模型会被安装到 `install/car_yolo/share/car_yolo/config/`。因此有两种做法：
 
-```bash
-# 做法 A：先把 .rknn 放到 src 里，再重新 build
-cp traffic_640n_7.rknn ~/patrol_ws/src/car_yolo/config/
-cd ~/patrol_ws
-colcon build --symlink-install
-
-# 做法 B：已经 build 过时，直接把 .rknn 放到安装后的 share 目录
-cp traffic_640n_7.rknn ~/patrol_ws/install/car_yolo/share/car_yolo/config/
-```
-
-如果 RKNN 输出没有类别名，还需要准备类别文件，每行一个类别名：
-
-```bash
-car_yolo/config/traffic_640n_7.names
-```
-
-也可以启动时手动传类别名：
-
-```bash
-ros2 run car_yolo yolo_detect --ros-args -p class_names:="class0,class1,class2"
-```
-
-## 2. 模型转换：从 `.pt` 生成 `.rknn`
-
-完整链路是：
+`yolov5s` 的 COCO 类别名已经内置在 `car_yolo/car_yolo/rknn_yolov5.py`，不需要额外 `.names` 文件。自定义模型如果没有内置类别名，需要准备：
 
 ```text
-traffic_640n_7.pt -> traffic_640n_7.onnx -> traffic_640n_7.rknn
+car_yolo/config/<model>.names
 ```
 
-一般不要在小车板子上做模型转换。推荐在电脑或 Ubuntu 开发机上安装 RKNN Toolkit2 做转换，然后把生成的 `.rknn` 拷贝到小车板子上运行。
+每行一个类别名，顺序必须和训练时的 class id 一致。
 
-### 2.1 确认小车芯片型号
+## 3. 代码入口
 
-在小车板子上执行：
+核心运行节点：
+
+```text
+car_yolo/car_yolo/yolo_detect.py
+```
+
+RKNN 后端：
+
+```text
+car_yolo/car_yolo/rknn_yolov5.py
+```
+
+模型转换脚本：
+
+```text
+car_yolo/tools/export_yolov5_to_onnx.py
+car_yolo/tools/convert_onnx_to_rknn.py
+```
+
+常用 launch：
+
+```text
+car_yolo/launch/car_yolo.launch.py
+car_report/launch/car_report_yolo.launch.py
+car_notify/launch/dingtalk_notify.launch.py
+```
+
+## 4. 虚拟机转换环境
+
+推荐用 Ubuntu 22.04 虚拟机，Python 3.10。
+
+创建环境：
 
 ```bash
-cat /proc/device-tree/compatible
+python3 -m venv ~/rknn-venv
+source ~/rknn-venv/bin/activate
+python -m pip install --upgrade pip
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple yolov5 onnx==1.16.1 onnxsim==0.4.36
 ```
 
-或者：
+安装 RKNN Toolkit2。解压 `rknn-toolkit2` 后，Python 3.10 + x86_64 Ubuntu 使用：
 
 ```bash
-tr '\0' '\n' < /proc/device-tree/compatible
+pip install /home/leo/Desktop/rknn-toolkit2-master/rknn-toolkit2/packages/x86_64/rknn_toolkit2-2.3.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
-输出里通常会出现 `rk3566`、`rk3568`、`rk3588` 之类字符串。后面 `--target-platform` 要填这个型号。
-
-例如：
+验证：
 
 ```bash
---target-platform rk3588
+python -c "from rknn.api import RKNN; print('RKNN Toolkit2 OK')"
+python -c "import onnx; print(onnx.__version__, hasattr(onnx, 'mapping'))"
 ```
 
-### 2.2 导出 ONNX
+`onnx` 建议固定在 `1.16.1`。如果使用 `onnx 1.21.0`，RKNN Toolkit2 2.3.2 可能报：
 
-在电脑或转换机上进入仓库根目录，也就是能看到 `car_yolo/` 的目录，然后执行：
+```text
+AttributeError: module 'onnx' has no attribute 'mapping'
+```
+
+如果 `torchvision` 报 `operator torchvision::nms does not exist`，让版本匹配：
+
+```bash
+pip uninstall -y torchvision
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple torchvision==0.19.0
+```
+
+因为 RKNN Toolkit2 2.3.2 会安装 `torch 2.4.0`，对应 `torchvision 0.19.0`。
+
+## 5. 转换 yolov5s.rknn
+
+在虚拟机里进入能看到 `car_yolo/` 的目录：
+
+```bash
+cd ~/Desktop/patrol-robot-Develop
+source ~/rknn-venv/bin/activate
+```
+
+导出 ONNX：
+
+```bash
+python car_yolo/tools/export_yolov5_to_onnx.py \
+  --weights car_yolo/config/yolov5s.pt \
+  --output car_yolo/config/yolov5s.onnx \
+  --img-size 640 \
+  --opset 12
+```
+
+转换 RKNN：
+
+```bash
+python car_yolo/tools/convert_onnx_to_rknn.py \
+  --onnx car_yolo/config/yolov5s.onnx \
+  --output car_yolo/config/yolov5s.rknn \
+  --target-platform rk3588 \
+  --quantized-dtype w8a8
+```
+
+校验文件头：
+
+```bash
+ls -lh car_yolo/config/yolov5s.rknn
+head -c 32 car_yolo/config/yolov5s.rknn | xxd
+```
+
+有效 RKNN 文件头应该看到：
+
+```text
+524b 4e4e
+RKNN
+```
+
+## 6. 转换 traffic_640n_7.rknn
+
+交通 7 类模型转换命令：
 
 ```bash
 python car_yolo/tools/export_yolov5_to_onnx.py \
@@ -81,45 +170,7 @@ python car_yolo/tools/export_yolov5_to_onnx.py \
   --output car_yolo/config/traffic_640n_7.onnx \
   --img-size 640 \
   --opset 12
-```
 
-如果你的环境里没有 `python -m yolov5.export`，可以先准备一个本地 `ultralytics/yolov5` 仓库，然后指定它：
-
-```bash
-python car_yolo/tools/export_yolov5_to_onnx.py \
-  --weights car_yolo/config/traffic_640n_7.pt \
-  --output car_yolo/config/traffic_640n_7.onnx \
-  --img-size 640 \
-  --opset 12 \
-  --yolov5-repo /path/to/yolov5
-```
-
-导出成功后应该能看到：
-
-```bash
-ls -lh car_yolo/config/traffic_640n_7.onnx
-```
-
-### 2.3 ONNX 转 RKNN
-
-转换机需要安装 Rockchip RKNN Toolkit2，并且下面命令能成功：
-
-```bash
-python -c "from rknn.api import RKNN; print('RKNN Toolkit2 OK')"
-```
-
-然后执行转换。下面以 `rk3588` 为例，实际型号要换成你的小车芯片型号：
-
-```bash
-python car_yolo/tools/convert_onnx_to_rknn.py \
-  --onnx car_yolo/config/traffic_640n_7.onnx \
-  --output car_yolo/config/traffic_640n_7.rknn \
-  --target-platform rk3588
-```
-
-RKNN Toolkit2 2.3.x 默认量化类型使用 `w8a8`。如果你手动指定量化类型，命令可以写成：
-
-```bash
 python car_yolo/tools/convert_onnx_to_rknn.py \
   --onnx car_yolo/config/traffic_640n_7.onnx \
   --output car_yolo/config/traffic_640n_7.rknn \
@@ -127,397 +178,214 @@ python car_yolo/tools/convert_onnx_to_rknn.py \
   --quantized-dtype w8a8
 ```
 
-先用不量化模型跑通链路。跑通后如果需要更高性能，再准备量化数据集：
+读取 `.pt` 中的类别名：
 
 ```bash
-python car_yolo/tools/convert_onnx_to_rknn.py \
-  --onnx car_yolo/config/traffic_640n_7.onnx \
-  --output car_yolo/config/traffic_640n_7.rknn \
-  --target-platform rk3588 \
-  --quantized-dtype w8a8 \
-  --dataset dataset.txt
+python - <<'PY'
+import sys
+import torch
+import yolov5
+from pathlib import Path
+
+yolov5_root = Path(yolov5.__file__).resolve().parent
+sys.path.insert(0, str(yolov5_root))
+
+ckpt = torch.load('car_yolo/config/traffic_640n_7.pt', map_location='cpu')
+model = ckpt.get('model') or ckpt.get('ema')
+names = getattr(model, 'names', None) or ckpt.get('names')
+
+if isinstance(names, dict):
+    names = [names[i] for i in sorted(names)]
+
+print(names)
+with open('car_yolo/config/traffic_640n_7.names', 'w', encoding='utf-8') as f:
+    f.write('\n'.join(names) + '\n')
+PY
 ```
 
-`dataset.txt` 每行是一张用于校准的图片路径，例如：
+## 7. 传模型到小车
 
-```text
-/home/user/calib_images/0001.jpg
-/home/user/calib_images/0002.jpg
-```
-
-### 2.4 把 RKNN 模型传到小车
-
-转换完成后，在电脑上执行：
+从虚拟机传到小车：
 
 ```bash
-scp car_yolo/config/traffic_640n_7.rknn elf@192.168.0.102:/home/elf/Desktop/ROS2/SRC_20260427/src/car_yolo/config/
+scp car_yolo/config/yolov5s.rknn elf@192.168.0.102:/home/elf/Desktop/ROS2/SRC_20260427/src/car_yolo/config/yolov5s.rknn
+scp car_yolo/config/traffic_640n_7.rknn elf@192.168.0.102:/home/elf/Desktop/ROS2/SRC_20260427/src/car_yolo/config/traffic_640n_7.rknn
 ```
 
-然后在小车板子上重新构建 `car_yolo`：
+小车上校验：
 
 ```bash
 cd ~/Desktop/ROS2/SRC_20260427
-source /opt/ros/$ROS_DISTRO/setup.bash
+ls -lh src/car_yolo/config/yolov5s.rknn
+head -c 32 src/car_yolo/config/yolov5s.rknn | xxd
+```
+
+如果文件头全是 `00`，说明传输后的模型文件损坏，需要重新传。有效文件头必须包含 `RKNN`。
+
+构建同步到 `install`：
+
+```bash
+cd ~/Desktop/ROS2/SRC_20260427
+rm -rf build/car_yolo install/car_yolo
 colcon build --symlink-install --packages-select car_yolo
 source install/setup.bash
-ls -lh install/car_yolo/share/car_yolo/config/traffic_640n_7.rknn
+head -c 32 install/car_yolo/share/car_yolo/config/yolov5s.rknn | xxd
 ```
 
-确认 `.rknn` 文件存在后，再启动 YOLO。
+## 8. 小车运行 yolov5s RKNN 闭环
 
-## 3. 板子环境检查
-
-进入小车板子后，先确认 ROS2 环境和工作区环境已经 source：
+终端 1，启动相机：
 
 ```bash
-source /opt/ros/$ROS_DISTRO/setup.bash
-source ~/patrol_ws/install/setup.bash
-```
-
-确认 RKNN Runtime 可用：
-
-```bash
-python3 -c "from rknnlite.api import RKNNLite; print('RKNNLite OK')"
-```
-
-如果这里报 `ModuleNotFoundError`，说明板子没有安装 `rknn-toolkit-lite2`，YOLO NPU 节点会启动失败。
-
-确认模型文件存在：
-
-```bash
-ls -lh ~/patrol_ws/install/car_yolo/share/car_yolo/config/traffic_640n_7.rknn
-```
-
-确认摄像头话题后面会出现：
-
-```bash
-ros2 topic list | grep camera
-```
-
-## 4. 推荐调试顺序
-
-不要一上来就启动全车。建议按下面顺序逐层调试：
-
-1. 只启动相机。
-2. 确认相机图像话题有数据。
-3. 单独启动 YOLO NPU 节点。
-4. 确认 YOLO 识别结果话题有数据。
-5. 再启动事件记录、自动驾驶或全车 bringup。
-
-这样出问题时能快速判断是相机、模型、NPU Runtime、YOLO 后处理，还是下游节点的问题。
-
-## 5. 只启动相机
-
-深度相机默认使用：
-
-```bash
+cd ~/Desktop/ROS2/SRC_20260427
+source install/setup.bash
 ros2 launch car_base car_camera.launch.py camera_type:=depth
 ```
 
-如果临时使用普通 USB 摄像头：
+终端 2，启动 YOLOv5s RKNN + 事件记录 + 截图保存：
 
 ```bash
-ros2 launch car_base car_camera.launch.py camera_type:=usb
+cd ~/Desktop/ROS2/SRC_20260427
+source install/setup.bash
+
+ros2 launch car_report car_report_yolo.launch.py \
+  yolo_backend:=rknn \
+  yolo_model:=yolov5s \
+  yolo_rknn_model:=yolov5s.rknn \
+  image_topic:=/camera/color/image_raw \
+  yolo_show_result:=false \
+  yolo_pub_result_img:=false \
+  min_score:=0.5 \
+  save_image:=true
 ```
 
-深度相机代码里默认彩色图像话题一般是：
+终端 3，启动钉钉通知：
 
 ```bash
-/camera/color/image_raw
+cd ~/Desktop/ROS2/SRC_20260427
+source install/setup.bash
+
+ros2 launch car_notify dingtalk_notify.launch.py \
+  event_topic:=/car_report/event \
+  keyword:=巡逻告警 \
+  min_score:=0.5 \
+  dry_run:=false
 ```
 
-USB 摄像头 launch 里发布的是：
+终端 4，观察事件：
 
 ```bash
-/usb_cam/image_raw
+cd ~/Desktop/ROS2/SRC_20260427
+source install/setup.bash
+ros2 topic echo /car_report/event
 ```
 
-确认相机是否真的在发图：
-
-```bash
-ros2 topic list | grep image
-ros2 topic hz /camera/color/image_raw
-```
-
-如果你用的是 USB 摄像头，把上一条换成：
-
-```bash
-ros2 topic hz /usb_cam/image_raw
-```
-
-也可以查看图像：
-
-```bash
-ros2 run rqt_image_view rqt_image_view
-```
-
-如果板子没有桌面环境，就先用 `ros2 topic hz` 判断是否有帧率。
-
-## 6. 单独启动 YOLO NPU 节点
-
-相机确认有图后，再开一个终端，source 环境：
-
-```bash
-source /opt/ros/$ROS_DISTRO/setup.bash
-source ~/patrol_ws/install/setup.bash
-```
-
-使用默认 NPU launch：
-
-```bash
-ros2 launch car_yolo car_yolo.launch.py
-```
-
-等价的显式启动方式：
-
-```bash
-ros2 run car_yolo yolo_detect --ros-args \
-  -p backend:=rknn \
-  -p model:=traffic_640n_7 \
-  -p rknn_model:=traffic_640n_7.rknn \
-  -p image_topic:=/camera/color/image_raw \
-  -p img_size:=640 \
-  -p conf_thres:=0.25 \
-  -p iou_thres:=0.45 \
-  -p npu_core:=auto
-```
-
-如果你用的是 USB 摄像头，需要改图像话题：
-
-```bash
-ros2 run car_yolo yolo_detect --ros-args \
-  -p backend:=rknn \
-  -p model:=traffic_640n_7 \
-  -p rknn_model:=traffic_640n_7.rknn \
-  -p image_topic:=/usb_cam/image_raw
-```
-
-如果板子接了显示器，并且想看标注图窗口：
-
-```bash
-ros2 run car_yolo yolo_detect --ros-args \
-  -p backend:=rknn \
-  -p model:=traffic_640n_7 \
-  -p rknn_model:=traffic_640n_7.rknn \
-  -p image_topic:=/camera/color/image_raw \
-  -p show_result:=true
-```
-
-如果没有显示器，不要开 `show_result`，否则 `cv2.imshow` 可能导致窗口相关错误。可以改为发布标注图：
-
-```bash
-ros2 run car_yolo yolo_detect --ros-args \
-  -p backend:=rknn \
-  -p model:=traffic_640n_7 \
-  -p rknn_model:=traffic_640n_7.rknn \
-  -p image_topic:=/camera/color/image_raw \
-  -p pub_result_img:=true
-```
-
-## 7. 检查 YOLO 输出
-
-YOLO 节点会发布两个主要话题：
-
-```bash
-/car_yolo/yolo_result
-/car_yolo/object_detect
-```
-
-查看结构化识别结果：
-
-```bash
-ros2 topic echo /car_yolo/object_detect
-```
-
-查看是否有发布频率：
-
-```bash
-ros2 topic hz /car_yolo/object_detect
-ros2 topic hz /car_yolo/yolo_result
-```
-
-如果开启了 `pub_result_img:=true`，可以查看标注图：
-
-```bash
-ros2 topic hz /car_yolo/result_img
-ros2 run rqt_image_view rqt_image_view
-```
-
-## 8. 判断是否真的用了 NPU
-
-启动日志里应该看到类似：
+成功事件示例应包含：
 
 ```text
-YOLO backend=rknn model=.../traffic_640n_7.rknn
+目标：person
+置信度：0.82
+截图大小：134988 bytes
+截图路径：/home/elf/Desktop/ROS2/SRC_20260427/install/car_report/share/car_report/data/events/images/...
+来源话题：/car_yolo/object_detect
 ```
 
-如果看到：
+## 9. 巡逻场景过滤建议
 
-```text
-YOLO backend=torch
-```
-
-那就是走了 PyTorch 回退，不是 NPU。
-
-还可以观察 CPU 占用：
+`yolov5s` 会识别 COCO 80 类，但比赛巡逻不需要 `mouse/chair/laptop` 等全部类别。建议启动事件记录时只推送巡逻相关目标：
 
 ```bash
-top
+target_classes:=person,car,motorcycle,bicycle,backpack,suitcase
 ```
 
-如果 Python 进程 CPU 长时间很高，说明可能没有真正走 NPU，或者后处理太重。NPU 推理正常时，CPU 占用通常会明显低于纯 PyTorch CPU 推理。
-
-## 9. 启动 YOLO + 事件记录
-
-如果只想验证“识别到目标后能不能记录事件”，启动：
-
-```bash
-ros2 launch car_report car_report_yolo.launch.py
-```
-
-这个 launch 会启动：
-
-- `car_yolo/yolo_detect`
-- `car_report/event_recorder`
-
-但它不会启动相机。所以需要先在另一个终端启动相机：
-
-```bash
-ros2 launch car_base car_camera.launch.py camera_type:=depth
-```
-
-如果要显式指定 NPU 参数：
+示例：
 
 ```bash
 ros2 launch car_report car_report_yolo.launch.py \
   yolo_backend:=rknn \
-  yolo_model:=traffic_640n_7 \
-  yolo_rknn_model:=traffic_640n_7.rknn \
-  image_topic:=/camera/color/image_raw
+  yolo_model:=yolov5s \
+  yolo_rknn_model:=yolov5s.rknn \
+  image_topic:=/camera/color/image_raw \
+  yolo_show_result:=false \
+  yolo_pub_result_img:=false \
+  min_score:=0.6 \
+  save_image:=true \
+  target_classes:=person,car,motorcycle,bicycle,backpack,suitcase
 ```
 
-查看事件：
+下一步应把单帧 `object_detected` 升级为巡逻事件：
+
+- `person` -> `person_detected` 或 `intrusion_detected`
+- `backpack/suitcase` -> `suspicious_package`
+- `car/motorcycle/bicycle` -> `vehicle_detected`
+- 连续 N 秒出现同一目标 -> `loitering` 或 `long_stay`
+
+## 10. 常见问题
+
+### 10.1 没有钉钉消息
+
+先看 YOLO 和事件话题是否有输出：
 
 ```bash
+ros2 topic echo /car_yolo/object_detect
 ros2 topic echo /car_report/event
 ```
 
-## 10. 启动自动驾驶 + YOLO
+如果 `/car_report/event` 有输出但钉钉没收到，再检查 `car_notify` 的 webhook、关键词和网络。
 
-当前自动驾驶和 YOLO 的组合 launch 是：
+### 10.2 没有截图路径
 
-```bash
-ros2 launch car_vision driver_yolo.launch.py
-```
-
-这个 launch 会启动：
-
-- `car_yolo/yolo_detect`
-- `car_vision/driver`
-
-注意：它本身不启动相机、底盘、雷达。所以正式跑自动驾驶前，通常还要先启动基础硬件：
+启动 `car_report_yolo.launch.py` 时必须使用：
 
 ```bash
-ros2 launch car_base car_base.launch.py
+save_image:=true
 ```
 
-然后另一个终端启动：
-
-```bash
-ros2 launch car_vision driver_yolo.launch.py
-```
-
-如果只是调 YOLO，不建议一开始就用这个组合 launch。先用“只启动相机 + 单独启动 YOLO”的方式确认 NPU 识别稳定。
-
-## 11. 启动全车基础硬件
-
-全车基础硬件 launch：
-
-```bash
-ros2 launch car_base car_base.launch.py
-```
-
-它会启动：
-
-- 底盘串口：`car_base/launch/base_serial.launch.py`
-- 相机：`car_base/launch/car_camera.launch.py`
-- 雷达：`car_base/launch/car_lidar.launch.py`
-- 机器人模型：`robot_mode_description.launch.py`
-- IMU 滤波：`imu_filter_madgwick_node`
-- EKF：`robot_localization/ekf_node`
-
-调试 YOLO 时，如果你只需要摄像头，不需要一开始就启动这个全套。
-
-## 12. 常见问题
-
-### 找不到 `.rknn` 模型
-
-报错类似：
+如果设置为 `false`，事件中会显示：
 
 ```text
-RKNN model not found
+截图大小：0 bytes
+截图路径：无
 ```
 
-处理：
+### 10.3 OpenCV / Qt / xcb 报错
+
+板子无桌面显示时不要开启 GUI：
 
 ```bash
-ls -lh ~/patrol_ws/install/car_yolo/share/car_yolo/config/
+yolo_show_result:=false
+yolo_pub_result_img:=false
 ```
 
-确认 `traffic_640n_7.rknn` 在安装后的 `config` 目录里。
-
-### 找不到 `rknnlite`
-
-报错类似：
+`show_result=true` 会触发 `cv2.imshow`，无显示环境时可能报：
 
 ```text
-ModuleNotFoundError: No module named 'rknnlite'
+qt.qpa.xcb: could not connect to display
 ```
 
-处理：在 RK 板子上安装 Rockchip 的 `rknn-toolkit-lite2`，直到下面命令成功：
+### 10.4 invalid RKNN_MAGIC
+
+如果出现：
+
+```text
+parseRKNN: invalid RKNN_MAGIC
+Invalid RKNN format
+```
+
+检查模型文件头：
 
 ```bash
-python3 -c "from rknnlite.api import RKNNLite; print('OK')"
+head -c 32 src/car_yolo/config/yolov5s.rknn | xxd
 ```
 
-### 没有识别结果
+有效文件应显示 `RKNN`。如果全是 `00`，重新从虚拟机传模型到小车。
 
-按顺序检查：
+### 10.5 Runtime 和 Toolkit 版本不一致
 
-```bash
-ros2 topic hz /camera/color/image_raw
-ros2 topic echo /car_yolo/object_detect
+当前已见到：
+
+```text
+RKNN Model version: 2.3.2 not match with rknn runtime version: 2.1.0
 ```
 
-如果相机没有帧率，先修相机。  
-如果相机有帧率但 YOLO 没输出，检查 `.rknn` 模型、类别文件、置信度阈值和启动日志。
-
-### 没有显示窗口
-
-无桌面环境时不要用：
-
-```bash
--p show_result:=true
-```
-
-改用：
-
-```bash
--p pub_result_img:=true
-```
-
-然后通过话题查看标注图。
-
-## 13. CPU 回退对照
-
-如果怀疑 RKNN 后处理或模型转换有问题，可以临时用 CPU 路径做对照：
-
-```bash
-ros2 run car_yolo yolo_detect --ros-args \
-  -p backend:=torch \
-  -p device:=cpu \
-  -p model:=traffic_640n_7 \
-  -p image_topic:=/camera/color/image_raw
-```
-
-这个命令只用于排查，不是 issue 的最终目标。
+目前模型可加载并运行，先记录为风险。如果后续出现推理异常、结果不稳定或崩溃，应升级板端 runtime 到 2.3.x，或用 Toolkit2 2.1.x 重新转换模型。
