@@ -117,6 +117,16 @@ python car_yolo/tools/convert_onnx_to_rknn.py \
   --target-platform rk3588
 ```
 
+RKNN Toolkit2 2.3.x 默认量化类型使用 `w8a8`。如果你手动指定量化类型，命令可以写成：
+
+```bash
+python car_yolo/tools/convert_onnx_to_rknn.py \
+  --onnx car_yolo/config/traffic_640n_7.onnx \
+  --output car_yolo/config/traffic_640n_7.rknn \
+  --target-platform rk3588 \
+  --quantized-dtype w8a8
+```
+
 先用不量化模型跑通链路。跑通后如果需要更高性能，再准备量化数据集：
 
 ```bash
@@ -124,6 +134,7 @@ python car_yolo/tools/convert_onnx_to_rknn.py \
   --onnx car_yolo/config/traffic_640n_7.onnx \
   --output car_yolo/config/traffic_640n_7.rknn \
   --target-platform rk3588 \
+  --quantized-dtype w8a8 \
   --dataset dataset.txt
 ```
 
