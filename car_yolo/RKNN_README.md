@@ -39,7 +39,122 @@ car_yolo/config/traffic_640n_7.names
 ros2 run car_yolo yolo_detect --ros-args -p class_names:="class0,class1,class2"
 ```
 
-## 2. 板子环境检查
+## 2. 模型转换：从 `.pt` 生成 `.rknn`
+
+完整链路是：
+
+```text
+traffic_640n_7.pt -> traffic_640n_7.onnx -> traffic_640n_7.rknn
+```
+
+一般不要在小车板子上做模型转换。推荐在电脑或 Ubuntu 开发机上安装 RKNN Toolkit2 做转换，然后把生成的 `.rknn` 拷贝到小车板子上运行。
+
+### 2.1 确认小车芯片型号
+
+在小车板子上执行：
+
+```bash
+cat /proc/device-tree/compatible
+```
+
+或者：
+
+```bash
+tr '\0' '\n' < /proc/device-tree/compatible
+```
+
+输出里通常会出现 `rk3566`、`rk3568`、`rk3588` 之类字符串。后面 `--target-platform` 要填这个型号。
+
+例如：
+
+```bash
+--target-platform rk3588
+```
+
+### 2.2 导出 ONNX
+
+在电脑或转换机上进入仓库根目录，也就是能看到 `car_yolo/` 的目录，然后执行：
+
+```bash
+python car_yolo/tools/export_yolov5_to_onnx.py \
+  --weights car_yolo/config/traffic_640n_7.pt \
+  --output car_yolo/config/traffic_640n_7.onnx \
+  --img-size 640 \
+  --opset 12
+```
+
+如果你的环境里没有 `python -m yolov5.export`，可以先准备一个本地 `ultralytics/yolov5` 仓库，然后指定它：
+
+```bash
+python car_yolo/tools/export_yolov5_to_onnx.py \
+  --weights car_yolo/config/traffic_640n_7.pt \
+  --output car_yolo/config/traffic_640n_7.onnx \
+  --img-size 640 \
+  --opset 12 \
+  --yolov5-repo /path/to/yolov5
+```
+
+导出成功后应该能看到：
+
+```bash
+ls -lh car_yolo/config/traffic_640n_7.onnx
+```
+
+### 2.3 ONNX 转 RKNN
+
+转换机需要安装 Rockchip RKNN Toolkit2，并且下面命令能成功：
+
+```bash
+python -c "from rknn.api import RKNN; print('RKNN Toolkit2 OK')"
+```
+
+然后执行转换。下面以 `rk3588` 为例，实际型号要换成你的小车芯片型号：
+
+```bash
+python car_yolo/tools/convert_onnx_to_rknn.py \
+  --onnx car_yolo/config/traffic_640n_7.onnx \
+  --output car_yolo/config/traffic_640n_7.rknn \
+  --target-platform rk3588
+```
+
+先用不量化模型跑通链路。跑通后如果需要更高性能，再准备量化数据集：
+
+```bash
+python car_yolo/tools/convert_onnx_to_rknn.py \
+  --onnx car_yolo/config/traffic_640n_7.onnx \
+  --output car_yolo/config/traffic_640n_7.rknn \
+  --target-platform rk3588 \
+  --dataset dataset.txt
+```
+
+`dataset.txt` 每行是一张用于校准的图片路径，例如：
+
+```text
+/home/user/calib_images/0001.jpg
+/home/user/calib_images/0002.jpg
+```
+
+### 2.4 把 RKNN 模型传到小车
+
+转换完成后，在电脑上执行：
+
+```bash
+scp car_yolo/config/traffic_640n_7.rknn elf@192.168.0.102:/home/elf/Desktop/ROS2/SRC_20260427/src/car_yolo/config/
+```
+
+然后在小车板子上重新构建 `car_yolo`：
+
+```bash
+cd ~/Desktop/ROS2/SRC_20260427
+source /opt/ros/$ROS_DISTRO/setup.bash
+colcon build --symlink-install --packages-select car_yolo
+source install/setup.bash
+ls -lh install/car_yolo/share/car_yolo/config/traffic_640n_7.rknn
+```
+
+确认 `.rknn` 文件存在后，再启动 YOLO。
+
+## 3. 板子环境检查
 
 进入小车板子后，先确认 ROS2 环境和工作区环境已经 source：
 
@@ -68,7 +183,7 @@ ls -lh ~/patrol_ws/install/car_yolo/share/car_yolo/config/traffic_640n_7.rknn
 ros2 topic list | grep camera
 ```
 
-## 3. 推荐调试顺序
+## 4. 推荐调试顺序
 
 不要一上来就启动全车。建议按下面顺序逐层调试：
 
@@ -80,7 +195,7 @@ ros2 topic list | grep camera
 
 这样出问题时能快速判断是相机、模型、NPU Runtime、YOLO 后处理，还是下游节点的问题。
 
-## 4. 只启动相机
+## 5. 只启动相机
 
 深度相机默认使用：
 
@@ -127,7 +242,7 @@ ros2 run rqt_image_view rqt_image_view
 
 如果板子没有桌面环境，就先用 `ros2 topic hz` 判断是否有帧率。
 
-## 5. 单独启动 YOLO NPU 节点
+## 6. 单独启动 YOLO NPU 节点
 
 相机确认有图后，再开一个终端，source 环境：
 
@@ -188,7 +303,7 @@ ros2 run car_yolo yolo_detect --ros-args \
   -p pub_result_img:=true
 ```
 
-## 6. 检查 YOLO 输出
+## 7. 检查 YOLO 输出
 
 YOLO 节点会发布两个主要话题：
 
@@ -217,7 +332,7 @@ ros2 topic hz /car_yolo/result_img
 ros2 run rqt_image_view rqt_image_view
 ```
 
-## 7. 判断是否真的用了 NPU
+## 8. 判断是否真的用了 NPU
 
 启动日志里应该看到类似：
 
@@ -241,7 +356,7 @@ top
 
 如果 Python 进程 CPU 长时间很高，说明可能没有真正走 NPU，或者后处理太重。NPU 推理正常时，CPU 占用通常会明显低于纯 PyTorch CPU 推理。
 
-## 8. 启动 YOLO + 事件记录
+## 9. 启动 YOLO + 事件记录
 
 如果只想验证“识别到目标后能不能记录事件”，启动：
 
@@ -276,7 +391,7 @@ ros2 launch car_report car_report_yolo.launch.py \
 ros2 topic echo /car_report/event
 ```
 
-## 9. 启动自动驾驶 + YOLO
+## 10. 启动自动驾驶 + YOLO
 
 当前自动驾驶和 YOLO 的组合 launch 是：
 
@@ -303,7 +418,7 @@ ros2 launch car_vision driver_yolo.launch.py
 
 如果只是调 YOLO，不建议一开始就用这个组合 launch。先用“只启动相机 + 单独启动 YOLO”的方式确认 NPU 识别稳定。
 
-## 10. 启动全车基础硬件
+## 11. 启动全车基础硬件
 
 全车基础硬件 launch：
 
@@ -322,7 +437,7 @@ ros2 launch car_base car_base.launch.py
 
 调试 YOLO 时，如果你只需要摄像头，不需要一开始就启动这个全套。
 
-## 11. 常见问题
+## 12. 常见问题
 
 ### 找不到 `.rknn` 模型
 
@@ -382,7 +497,7 @@ ros2 topic echo /car_yolo/object_detect
 
 然后通过话题查看标注图。
 
-## 12. CPU 回退对照
+## 13. CPU 回退对照
 
 如果怀疑 RKNN 后处理或模型转换有问题，可以临时用 CPU 路径做对照：
 
