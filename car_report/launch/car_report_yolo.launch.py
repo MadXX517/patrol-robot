@@ -52,12 +52,22 @@ def generate_launch_description():
     yolo_device_arg = DeclareLaunchArgument(
         'yolo_device',
         default_value='cpu',
-        description='YOLO compute device'
+        description='Torch compute device when yolo_backend=torch'
+    )
+    yolo_backend_arg = DeclareLaunchArgument(
+        'yolo_backend',
+        default_value='rknn',
+        description='YOLO inference backend: rknn or torch'
     )
     yolo_model_arg = DeclareLaunchArgument(
         'yolo_model',
-        default_value='yolov5s',
+        default_value='traffic_640n_7',
         description='YOLO model name in car_yolo config (yolov5s = COCO 80 classes; traffic_640n_7 = traffic scene only)'
+    )
+    yolo_rknn_model_arg = DeclareLaunchArgument(
+        'yolo_rknn_model',
+        default_value='traffic_640n_7.rknn',
+        description='RKNN model file name in car_yolo config, or an absolute path'
     )
     yolo_show_result_arg = DeclareLaunchArgument(
         'yolo_show_result',
@@ -75,8 +85,10 @@ def generate_launch_description():
         executable='yolo_detect',
         output='screen',
         parameters=[{
+            'backend': LaunchConfiguration('yolo_backend'),
             'device': LaunchConfiguration('yolo_device'),
             'model': LaunchConfiguration('yolo_model'),
+            'rknn_model': LaunchConfiguration('yolo_rknn_model'),
             'image_topic': LaunchConfiguration('image_topic'),
             'show_result': ParameterValue(LaunchConfiguration('yolo_show_result'), value_type=bool),
             'pub_result_img': ParameterValue(LaunchConfiguration('yolo_pub_result_img'), value_type=bool),
@@ -110,8 +122,10 @@ def generate_launch_description():
         save_image_arg,
         max_image_bytes_arg,
         jpeg_quality_arg,
+        yolo_backend_arg,
         yolo_device_arg,
         yolo_model_arg,
+        yolo_rknn_model_arg,
         yolo_show_result_arg,
         yolo_pub_result_img_arg,
         yolo_node,
