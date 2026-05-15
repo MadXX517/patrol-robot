@@ -81,6 +81,10 @@ ekf_filter_node:
 # do not provide some of the state variables estimated by the filter. For example, a TwistWithCovarianceStamped message
 # has no pose information, so the first six values would be meaningless in that case. Each vector defaults to all false
 # if unspecified, effectively making this parameter required for each sensor.
+        # Plan A: dual-source vyaw (wheel + IMU) for cross-validation.
+        # Fuse from wheel odom: x (differential->vx), vx, vy, vyaw.
+        # Wheel vyaw covariance should be >> IMU vyaw covariance so EKF lets IMU dominate
+        # while wheel keeps it honest against gyro static bias drift.
         odom0_config: [true, false, false,
                        false, false, false,
                        true,  true,  false,
@@ -122,10 +126,13 @@ ekf_filter_node:
 #         odom0_twist_rejection_threshold: 1.0
 
         imu0: /imu/data
+        # MPU6050 has NO magnetometer -> madgwick absolute yaw drifts (no obs without mag).
+        # Fuse ONLY vyaw (gyro angular velocity). Wheel odom provides the cross-check (Plan A).
+        # Absolute yaw correction is handled by AMCL/scan-matching (map->odom).
         imu0_config: [false, false, false,
                       false, false, false,
                       false, false, false,
-                      false, false, false,
+                      false, false, true,
                       false,  false, false]
 
         imu0_nodelay: false
