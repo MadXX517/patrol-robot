@@ -147,7 +147,7 @@ controller_server:
       no_outer_iterations: 4
       optimization_activate: True
       optimization_verbose: False
-      penalty_epsilon: 0.1
+      penalty_epsilon: 0.05
       obstacle_cost_exponent: 4.0
       weight_max_vel_x: 0.5
       weight_max_vel_theta: 0.5
@@ -312,7 +312,7 @@ planner_server:
     use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_navfn_planner::NavfnPlanner"
+      plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.5
       use_astar: false
       allow_unknown: true
