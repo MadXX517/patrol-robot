@@ -115,10 +115,15 @@ controller_server:
       publish_feedback: False
           
       # Robot
-      max_vel_x: 0.08
-      max_vel_theta: 0.2
-      acc_lim_x: 0.14
-      acc_lim_theta: 0.3
+      # Plan A: lift cruise velocity above motor deadband (~0.15 m/s).
+      # At v<=0.10 the chassis exhibits asymmetric startup curving (~10deg
+      # right turn in first ~300 ms). v>=0.15 drives essentially straight.
+      max_vel_x: 0.18
+      max_vel_x_backwards: 0.10
+      max_vel_theta: 0.4
+      acc_lim_x: 0.5
+      acc_lim_theta: 0.8
+      min_turning_radius: 0.0
 
       # Velocity and acceleration limits
       footprint_model:
