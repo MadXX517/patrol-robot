@@ -26,7 +26,7 @@ def parse_args():
     )
     parser.add_argument(
         '--quantized-dtype',
-        default='asymmetric_quantized-u8',
+        default='w8a8',
         help='RKNN quantized dtype when --dataset is provided.',
     )
     parser.add_argument('--verbose', action='store_true', help='Enable RKNN Toolkit verbose logs.')

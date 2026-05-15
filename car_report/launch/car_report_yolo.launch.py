@@ -61,12 +61,12 @@ def generate_launch_description():
     )
     yolo_model_arg = DeclareLaunchArgument(
         'yolo_model',
-        default_value='traffic_640n_7',
+        default_value='yolov5s',
         description='YOLO model name in car_yolo config (yolov5s = COCO 80 classes; traffic_640n_7 = traffic scene only)'
     )
     yolo_rknn_model_arg = DeclareLaunchArgument(
         'yolo_rknn_model',
-        default_value='traffic_640n_7.rknn',
+        default_value='yolov5s.rknn',
         description='RKNN model file name in car_yolo config, or an absolute path'
     )
     yolo_show_result_arg = DeclareLaunchArgument(
