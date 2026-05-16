@@ -89,8 +89,8 @@ controller_server:
     goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.05
-      yaw_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.10
+      yaw_goal_tolerance: 6.28    # ~2pi: any final heading is fine
 
     controller_plugin_types: ["teb_local_planner::TebLocalPlannerROS"]
     controller_plugins: ["FollowPath"]
@@ -120,7 +120,7 @@ controller_server:
       # right turn in first ~300 ms). v>=0.15 drives essentially straight.
       max_vel_x: 0.18
       max_vel_x_backwards: 0.10
-      max_vel_y: 0.05          # strafe even more restricted to reduce near-goal crab walk
+      max_vel_y: 0.05          # small strafe needed; 0 caused spiral/abort previously
       max_vel_theta: 0.4
       acc_lim_x: 0.5
       acc_lim_y: 0.2
@@ -160,10 +160,10 @@ controller_server:
       weight_max_vel_theta: 0.5
       weight_acc_lim_x: 1.0 
       weight_acc_lim_theta: 2.0  
-      # Omni: 1.0 -> crab walk; 1000 -> diff-drive. ~10 keeps strong forward preference, vy assists.
+      # Omni: 1.0 -> crab walk; 1000 -> diff-drive (spirals). 10 = strong forward preference + small strafe.
       weight_kinematics_nh: 10.0
-      # Mild forward preference but still allow backward/strafe when better
-      weight_kinematics_forward_drive: 2.0
+      # Strongly prefer forward over backward
+      weight_kinematics_forward_drive: 10.0
       weight_kinematics_turning_radius: 0.0
       weight_optimaltime: 1.5 # 3.5  
       weight_shortest_path: 0.0
@@ -175,7 +175,7 @@ controller_server:
       weight_adapt_factor: 2.0
       # new
       weight_position: 5.0              # 优先 XY
-      weight_goal_orientation: 1.0      # face the goal direction near the end
+      weight_goal_orientation: 0.0      # don't rotate in place at goal
 
       # Homotopy Class Planner
       enable_homotopy_class_planning: True
