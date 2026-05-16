@@ -79,22 +79,6 @@ ros2 launch car_notify dingtalk_notify.launch.py webhook_url:="https://oapi.ding
 - 自定义机器人接入：https://open.dingtalk.com/document/group/custom-robot-access
 - 自定义机器人安全设置：https://open.dingtalk.com/document/dingstart/customize-robot-security-settings
 
-## 无 ROS2 环境验证
-
-当前电脑没有 ROS2 时，只验证后半段钉钉 webhook 链路即可：
-
-```bash
-python car_notify/car_notify/dingtalk_notifier.py --webhook-test
-```
-
-`--webhook-test` 使用代码内置的一条测试事件，走真实 `build_markdown_payload -> HTTP POST -> 钉钉返回解析` 流程，不依赖 ROS2、不依赖 `/car_report/event`。终端会打印本次测试 payload 和钉钉返回，用来确认 webhook token、关键词、安全设置、网络和返回解析是通的。
-
-如果临时换机器人或关键词：
-
-```bash
-python car_notify/car_notify/dingtalk_notifier.py --webhook-test --webhook-url "https://oapi.dingtalk.com/robot/send?access_token=新的token" --keyword 巡逻告警
-```
-
 ## ROS2 环境运行
 
 先启动识别和事件记录：
@@ -103,10 +87,24 @@ python car_notify/car_notify/dingtalk_notifier.py --webhook-test --webhook-url "
 ros2 launch car_report car_report_yolo.launch.py
 ```
 
+`car_report_yolo.launch.py` 默认会按 `car_yolo` 当前配置启动识别。`car_notify` 只依赖 `/car_report/event`，不关心 YOLO 使用 RKNN 还是 torch，也不依赖网页流 `/result_img`。
+
+如果在小车桌面环境直接打开 OpenCV 检测窗口：
+
+```bash
+ros2 launch car_report car_report_yolo.launch.py yolo_show_result:=true
+```
+
 再启动钉钉推送：
 
 ```bash
 ros2 launch car_notify dingtalk_notify.launch.py
+```
+
+单独测试钉钉 webhook 连通性：
+
+```bash
+ros2 run car_notify dingtalk_notifier --webhook-test
 ```
 
 ROS2 真实运行链路是：
@@ -138,8 +136,9 @@ ros2 launch car_notify dingtalk_notify.launch.py dry_run:=true
 - 底盘
 - 导航
 - Web 服务
+- `/result_img` 网页流
 
-这样不会和其他功能包竞争。后续总 launch 可以用参数控制是否启用通知，例如设计一个 `enable_dingtalk_notify` 参数：为 `true` 时启动 `car_notify`，为 `false` 时不启动。这样平时调试不打扰钉钉群，比赛演示再打开。
+这样不会和其他功能包竞争，也不会受 YOLO 后端选择影响。后续总 launch 可以用参数控制是否启用通知，例如设计一个 `enable_dingtalk_notify` 参数：为 `true` 时启动 `car_notify`，为 `false` 时不启动。这样平时调试不打扰钉钉群，比赛演示再打开。
 
 ## 参数
 
@@ -154,25 +153,6 @@ ros2 launch car_notify dingtalk_notify.launch.py dry_run:=true
 - `timeout`：HTTP 超时时间，默认 `10.0` 秒；节点内最小按 `1.0` 秒处理，避免错误参数导致请求立即失败。
 - `dry_run`：只打印 markdown，不请求 webhook，默认 `false`。
 
-`dingtalk_notifier.py` 非 ROS2 测试参数：
-
-- `--webhook-test`：使用内置事件真实请求钉钉 webhook。
-- `--webhook-url`：测试时覆盖默认 webhook。
-- `--keyword`：测试时覆盖默认关键词。
-- `--timeout`：测试 HTTP 超时时间，默认 `10.0` 秒。
-
-## 提交前最小检查
-
-当前电脑没有 ROS2 环境时，保留两条必要检查：
-
-```bash
-python -m py_compile car_notify/car_notify/dingtalk_notifier.py car_notify/launch/dingtalk_notify.launch.py
-python car_notify/car_notify/dingtalk_notifier.py --webhook-test
-```
-
-- `py_compile`：检查 Python 语法。
-- `--webhook-test`：绕过 ROS2，真实请求钉钉 webhook，显示测试 payload 和钉钉返回，验证后半链路可用。
-
 注册入口在 `car_notify/setup.py` 的 `console_scripts`：
 
 - `dingtalk_notifier = car_notify.dingtalk_notifier:main`
@@ -183,12 +163,16 @@ python car_notify/car_notify/dingtalk_notifier.py --webhook-test
 ros2 run car_notify dingtalk_notifier
 ```
 
-## 未上车验证事项
+## 已验证与运行注意
 
-当前代码是源码侧实现，尚未在小车 ROS2 环境里实测。需要确认：
+已在小车 ROS2 环境验证：
 
-- `/car_report/event` 是否稳定发布事件 JSON。
+- `car_notify` 可订阅 `/car_report/event`。
+- `/car_report/event -> dingtalk_notifier -> 钉钉 webhook` 链路可正常推送。
+- `dry_run` 可用于只看将发送的 markdown 内容。
+
+运行时仍需按现场情况关注：
+
 - 钉钉机器人关键词是否和 `keyword` 参数一致。
 - 小车网络是否能访问钉钉 webhook。
-- 钉钉群是否收到 markdown 消息。
-- 冷却时间是否符合比赛演示节奏。
+- `min_score`、`target_classes`、`cooldown_sec` 是否符合演示节奏，避免刷屏。
