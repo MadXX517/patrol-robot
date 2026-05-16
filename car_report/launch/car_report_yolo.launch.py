@@ -66,8 +66,8 @@ def generate_launch_description():
     )
     yolo_rknn_model_arg = DeclareLaunchArgument(
         'yolo_rknn_model',
-        default_value='yolov5s.rknn',
-        description='RKNN model file name in car_yolo config, or an absolute path'
+        default_value='',
+        description='RKNN model file name in car_yolo config, or an absolute path; empty means <yolo_model>.rknn'
     )
     yolo_show_result_arg = DeclareLaunchArgument(
         'yolo_show_result',

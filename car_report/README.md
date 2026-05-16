@@ -75,16 +75,6 @@
 
 API Key 当前按私有仓库临时方案处理，写死在 `car_report/car_report/report_generator.py` 的 `BIGMODEL_API_KEY` 中。
 
-## 无 ROS2 环境验证
-
-当前电脑没有 ROS2 时，只验证后半段 GLM API 链路即可：
-
-```bash
-python car_report/car_report/report_generator.py --api-test
-```
-
-`--api-test` 使用代码内置的一条事件，走真实 `build_messages -> HTTP POST -> GLM 返回解析` 流程，不依赖 ROS2、不依赖事件文件、不写报告文件。终端会打印本次测试输入和模型回答，用来确认 API Key、模型名、endpoint、网络和返回解析是通的。
-
 ## ROS2 环境运行
 
 只启动事件记录，适合相机和 YOLO 已经由其他 launch 启动的情况：
@@ -97,6 +87,20 @@ ros2 launch car_report car_report.launch.py
 
 ```bash
 ros2 launch car_report car_report_yolo.launch.py
+```
+
+`car_report_yolo.launch.py` 默认使用 `car_yolo` 当前 RKNN 链路：`yolo_backend=rknn`、`yolo_model=yolov5s`。`yolo_rknn_model` 默认留空，由 `car_yolo` 自动使用 `<yolo_model>.rknn`。如果需要网页查看带置信框的 `/result_img`，启动时加 `yolo_pub_result_img:=true`。
+
+如果在小车桌面环境直接打开 OpenCV 检测窗口：
+
+```bash
+ros2 launch car_report car_report_yolo.launch.py yolo_show_result:=true
+```
+
+单独测试 GLM API 连通性：
+
+```bash
+ros2 run car_report report_generator --api-test
 ```
 
 已有事件日志后，生成文本报告：
@@ -142,10 +146,12 @@ ros2 run car_report report_generator --mode vision --max-images 3
 
 `car_report_yolo.launch.py` 额外支持：
 
-- `yolo_device`：YOLO 推理设备，默认 `cpu`。
-- `yolo_model`：`car_yolo/config` 下的模型名，默认 `traffic_640n_7`。
+- `yolo_backend`：YOLO 推理后端，默认 `rknn`；需要走 PyTorch 时可设为 `torch`。
+- `yolo_device`：PyTorch 后端的推理设备，默认 `cpu`；`yolo_backend=rknn` 时不使用。
+- `yolo_model`：`car_yolo/config` 下的模型名，默认 `yolov5s`。
+- `yolo_rknn_model`：RKNN 模型文件名或绝对路径，默认空字符串；留空时由 `car_yolo` 自动使用 `<yolo_model>.rknn`。
 - `yolo_show_result`：是否弹出 YOLO 显示窗口，默认 `false`。
-- `yolo_pub_result_img`：是否发布 YOLO 标注图，默认 `false`。
+- `yolo_pub_result_img`：是否发布 YOLO 标注图 `/result_img`，默认 `false`；网页查看置信框时设为 `true`。
 
 `report_generator` 参数：
 
@@ -158,19 +164,6 @@ ros2 run car_report report_generator --mode vision --max-images 3
 - `--endpoint`：BigModel 对话补全接口。
 - `--temperature`：生成随机性，默认 `0.2`。
 - `--timeout`：HTTP 超时时间，默认 `60` 秒。
-- `--api-test`：使用内置事件真实调用 GLM，输出测试输入和模型回答，用于确认 API Key、模型名、endpoint、网络和返回解析可用。
-
-## 提交前最小检查
-
-当前电脑没有 ROS2 环境时，保留两条必要检查：
-
-```bash
-python -m py_compile car_report/car_report/event_recorder.py car_report/car_report/report_generator.py
-python car_report/car_report/report_generator.py --api-test
-```
-
-- `py_compile`：检查 Python 语法。
-- `--api-test`：绕过 ROS2 和事件文件，真实请求 GLM，显示测试输入和回答，验证 API 链路可用。
 
 注册入口在 `car_report/setup.py` 的 `console_scripts`：
 
@@ -184,13 +177,18 @@ ros2 run car_report event_recorder
 ros2 run car_report report_generator
 ```
 
-## 未上车验证事项
+## 已验证与运行注意
 
-当前代码是源码侧实现，尚未在小车 ROS2 环境实跑。需要上车确认：
+已在小车 ROS2 环境验证：
 
-- `/camera/color/image_raw` 是否是实际使用的相机话题。
-- `car_yolo` 权重 `traffic_640n_7` 是否能正常加载。
-- `/car_yolo/object_detect` 的实际发布频率和字段是否稳定。
-- 截图保存和压缩是否影响实时性能。
+- `car_report_yolo.launch.py` 可启动 `car_yolo + event_recorder`。
+- `/car_yolo/object_detect` 可被 `event_recorder` 接收并转成 `/car_report/event`。
+- 事件 JSONL 和截图可正常生成。
+- `report_generator` 的 GLM API 调用已验证可用。
+
+运行时仍需按现场情况关注：
+
+- `/camera/color/image_raw` 是否持续有相机图像。
+- RKNN 模型文件是否和 `yolo_model` 对应。
+- 截图保存和压缩对实时性能的影响。
 - 小车网络是否能稳定访问 BigModel API。
-- GLM 实际返回格式是否和本地 `--api-test` 结果一致。
