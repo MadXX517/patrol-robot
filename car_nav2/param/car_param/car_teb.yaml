@@ -120,10 +120,10 @@ controller_server:
       # right turn in first ~300 ms). v>=0.15 drives essentially straight.
       max_vel_x: 0.18
       max_vel_x_backwards: 0.10
-      max_vel_y: 0.15          # mecanum strafe; must be >0 or allow_omni is a no-op
+      max_vel_y: 0.08          # strafe as auxiliary only; full omni was "crab walk"
       max_vel_theta: 0.4
       acc_lim_x: 0.5
-      acc_lim_y: 0.5
+      acc_lim_y: 0.3
       acc_lim_theta: 0.8
       min_turning_radius: 0.0
 
@@ -160,10 +160,10 @@ controller_server:
       weight_max_vel_theta: 0.5
       weight_acc_lim_x: 1.0 
       weight_acc_lim_theta: 2.0  
-      # Omni/mecanum: must NOT enforce non-holonomic; large value forces diff-drive (cmd_vy=0 always)
-      weight_kinematics_nh: 1.0
-      # Omni: no preference for forward over backward; allow free vy
-      weight_kinematics_forward_drive: 1.0 # 1000.0 was forcing diff-drive
+      # Omni: 1.0 -> crab walk; 1000 -> diff-drive. ~5 keeps forward preference, lets vy assist.
+      weight_kinematics_nh: 5.0
+      # Mild forward preference but still allow backward/strafe when better
+      weight_kinematics_forward_drive: 2.0
       weight_kinematics_turning_radius: 0.0
       weight_optimaltime: 1.5 # 3.5  
       weight_shortest_path: 0.0
