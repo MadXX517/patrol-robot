@@ -89,8 +89,8 @@ controller_server:
     goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.05
-      yaw_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.10
+      yaw_goal_tolerance: 6.28    # ~2pi: any final heading is fine
 
     controller_plugin_types: ["teb_local_planner::TebLocalPlannerROS"]
     controller_plugins: ["FollowPath"]
@@ -115,10 +115,17 @@ controller_server:
       publish_feedback: False
           
       # Robot
-      max_vel_x: 0.08
-      max_vel_theta: 0.2
-      acc_lim_x: 0.14
-      acc_lim_theta: 0.3
+      # Plan A: lift cruise velocity above motor deadband (~0.15 m/s).
+      # At v<=0.10 the chassis exhibits asymmetric startup curving (~10deg
+      # right turn in first ~300 ms). v>=0.15 drives essentially straight.
+      max_vel_x: 0.18
+      max_vel_x_backwards: 0.10
+      max_vel_y: 0.05          # small strafe needed; 0 caused spiral/abort previously
+      max_vel_theta: 0.4
+      acc_lim_x: 0.5
+      acc_lim_y: 0.2
+      acc_lim_theta: 0.8
+      min_turning_radius: 0.0
 
       # Velocity and acceleration limits
       footprint_model:
@@ -147,15 +154,17 @@ controller_server:
       no_outer_iterations: 4
       optimization_activate: True
       optimization_verbose: False
-      penalty_epsilon: 0.1
+      penalty_epsilon: 0.05
       obstacle_cost_exponent: 4.0
       weight_max_vel_x: 0.5
       weight_max_vel_theta: 0.5
       weight_acc_lim_x: 1.0 
       weight_acc_lim_theta: 2.0  
-      weight_kinematics_nh: 1000.0
-      weight_kinematics_forward_drive: 1000.0 # 100.0
-      weight_kinematics_turning_radius: 1.0
+      # Omni: 1.0 -> crab walk; 1000 -> diff-drive (spirals). 10 = strong forward preference + small strafe.
+      weight_kinematics_nh: 10.0
+      # Strongly prefer forward over backward
+      weight_kinematics_forward_drive: 10.0
+      weight_kinematics_turning_radius: 0.0
       weight_optimaltime: 1.5 # 3.5  
       weight_shortest_path: 0.0
       weight_obstacle: 10.0  
@@ -166,7 +175,7 @@ controller_server:
       weight_adapt_factor: 2.0
       # new
       weight_position: 5.0              # 优先 XY
-      weight_goal_orientation: 0.1      # 旋转优先级降低
+      weight_goal_orientation: 0.0      # don't rotate in place at goal
 
       # Homotopy Class Planner
       enable_homotopy_class_planning: True
@@ -312,7 +321,7 @@ planner_server:
     use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_navfn_planner::NavfnPlanner"
+      plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.5
       use_astar: false
       allow_unknown: true
@@ -338,15 +347,15 @@ behavior_server:
     cycle_frequency: 10.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
-      plugin: "nav2_behaviors::Spin"
+      plugin: "nav2_behaviors/Spin"
     backup:
-      plugin: "nav2_behaviors::BackUp"
+      plugin: "nav2_behaviors/BackUp"
     drive_on_heading:
-      plugin: "nav2_behaviors::DriveOnHeading"
+      plugin: "nav2_behaviors/DriveOnHeading"
     wait:
-      plugin: "nav2_behaviors::Wait"
+      plugin: "nav2_behaviors/Wait"
     assisted_teleop:
-      plugin: "nav2_behaviors::AssistedTeleop"
+      plugin: "nav2_behaviors/AssistedTeleop"
     global_frame: odom_combined
     robot_base_frame: base_link
     transform_tolerance: 0.1

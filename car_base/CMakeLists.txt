@@ -68,7 +68,10 @@ ament_target_dependencies(car_base_node tf2_ros tf2 tf2_geometry_msgs rclcpp std
 #add_executable(testNode src/test.cpp src/Quaternion_Solution.cpp)
 #ament_target_dependencies(testNode rclcpp std_msgs nav_msgs std_srvs sensor_msgs ackermann_msgs serial car_msg)
 
-install(PROGRAMS scripts/cmd_vel_to_ackermann_drive.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS
+  scripts/cmd_vel_to_ackermann_drive.py
+  scripts/scan_angle_filter.py
+  DESTINATION lib/${PROJECT_NAME})
 
 install(TARGETS
 car_base_node

@@ -40,6 +40,12 @@ def generate_launch_description():
     my_map_dir = os.path.join(my_nav_dir, 'map')
     my_map_file = 'car_ai.yaml'
 
+    # 默认地图路径：优先使用 save_map 保存到家目录的 ~/maps/car.yaml，
+    # 不存在时回退到包内自带的 car_ai.yaml，保证保存与加载使用同一文件。
+    user_map_file = os.path.expanduser('~/maps/car.yaml')
+    default_map_path = user_map_file if os.path.exists(user_map_file) \
+        else os.path.join(my_map_dir, my_map_file)
+
     # Create the launch configuration variables
     namespace = LaunchConfiguration('namespace')
     use_namespace = LaunchConfiguration('use_namespace')
@@ -91,7 +97,7 @@ def generate_launch_description():
         description='Whether run a SLAM')
     declare_map_yaml_cmd = DeclareLaunchArgument(
         'map',
-        default_value=os.path.join(my_map_dir, my_map_file),
+        default_value=default_map_path,
         description='Full path to map yaml file to load')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
