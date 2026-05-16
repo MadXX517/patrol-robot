@@ -120,8 +120,10 @@ controller_server:
       # right turn in first ~300 ms). v>=0.15 drives essentially straight.
       max_vel_x: 0.18
       max_vel_x_backwards: 0.10
+      max_vel_y: 0.15          # mecanum strafe; must be >0 or allow_omni is a no-op
       max_vel_theta: 0.4
       acc_lim_x: 0.5
+      acc_lim_y: 0.5
       acc_lim_theta: 0.8
       min_turning_radius: 0.0
 
