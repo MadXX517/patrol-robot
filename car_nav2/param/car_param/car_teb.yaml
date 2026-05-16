@@ -158,9 +158,11 @@ controller_server:
       weight_max_vel_theta: 0.5
       weight_acc_lim_x: 1.0 
       weight_acc_lim_theta: 2.0  
-      weight_kinematics_nh: 1000.0
-      weight_kinematics_forward_drive: 1000.0 # 100.0
-      weight_kinematics_turning_radius: 1.0
+      # Omni/mecanum: must NOT enforce non-holonomic; large value forces diff-drive (cmd_vy=0 always)
+      weight_kinematics_nh: 1.0
+      # Omni: no preference for forward over backward; allow free vy
+      weight_kinematics_forward_drive: 1.0 # 1000.0 was forcing diff-drive
+      weight_kinematics_turning_radius: 0.0
       weight_optimaltime: 1.5 # 3.5  
       weight_shortest_path: 0.0
       weight_obstacle: 10.0  
