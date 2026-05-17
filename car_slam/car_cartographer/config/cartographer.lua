@@ -49,11 +49,16 @@ TRAJECTORY_BUILDER_2D.loop_closure_adaptive_voxel_filter.min_num_points = 100  -
 TRAJECTORY_BUILDER_2D.loop_closure_adaptive_voxel_filter.max_range = 50.0  -- 回环闭合自适应体素滤波器的最大范围
 
 TRAJECTORY_BUILDER_2D.use_online_correlative_scan_matching = true  -- 是否使用在线相关性扫描匹配
-TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.1  -- 实时相关性扫描匹配的线性搜索窗口
-TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.angular_search_window = math.rad(30.0)  -- 实时相关性扫描匹配的角度搜索窗口
+-- NOTE(2026-05-17): 收紧 RT-CSM 搜索窗解决转向时 10-20° 瞬间误匹配。
+-- 原值 linear=0.1m / angular=30° 过大，转向时 odom 外推误差 + 走廊对称纹理
+-- 会让 RT-CSM 跳到搜索窗内的局部最优误匹配（10-20° 偏移正好落在 30° 窗内）。
+-- 8° 足以覆盖 10Hz 间隔内任何合理的 odom 外推角误差。
+TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.05  -- 实时相关性扫描匹配的线性搜索窗口
+TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.angular_search_window = math.rad(8.0)  -- 实时相关性扫描匹配的角度搜索窗口
 
-TRAJECTORY_BUILDER_2D.ceres_scan_matcher.translation_weight = 10.0  -- Ceres 扫描匹配的平移权重
-TRAJECTORY_BUILDER_2D.ceres_scan_matcher.rotation_weight = 40.0  -- Ceres 扫描匹配的旋转权重
+-- NOTE(2026-05-17): 提高 ceres 旋转/平移权重以更信任运动先验，抑制转向时跳变。
+TRAJECTORY_BUILDER_2D.ceres_scan_matcher.translation_weight = 20.0  -- Ceres 扫描匹配的平移权重
+TRAJECTORY_BUILDER_2D.ceres_scan_matcher.rotation_weight = 200.0  -- Ceres 扫描匹配的旋转权重
 TRAJECTORY_BUILDER_2D.ceres_scan_matcher.ceres_solver_options.num_threads = 4  -- Ceres 解算器的线程数
 
 POSE_GRAPH.optimization_problem.huber_scale = 1e1  -- Huber 损失函数的尺度
