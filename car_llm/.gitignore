@@ -7,6 +7,11 @@ bin-release/
 # Other files and folders
 .settings/
 
+# 运行时生成的 DashScope 热词缓存(机器/运行相关,勿提交)
+config/.vocabulary_id.json
+__pycache__/
+*.pyc
+
 # Executables
 *.swf
 *.air
