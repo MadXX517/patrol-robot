@@ -62,16 +62,18 @@ v1 不上传图片。钉钉 webhook 的 markdown 不能直接发送本地文件�
 巡逻告警
 ```
 
-当前默认 webhook 只写死在一个位置：
-
-- `car_notify/car_notify/dingtalk_notifier.py` 的 `DEFAULT_WEBHOOK_URL`
-
-`car_notify/launch/dingtalk_notify.launch.py` 默认传空 `webhook_url`，节点会自动回退到 `dingtalk_notifier.py` 里的 `DEFAULT_WEBHOOK_URL`。如果 launch 传入 `webhook_url` 参数，则会覆盖这个默认值。
-
-默认关键词是 `巡逻告警`，代码会把它同时放进 markdown `title` 和正文，避免关键词校验拦截。要换机器人，可以改 `DEFAULT_WEBHOOK_URL`，也可以启动时用参数覆盖：
+webhook 不再写死在代码中。推荐运行前设置环境变量：
 
 ```bash
-ros2 launch car_notify dingtalk_notify.launch.py webhook_url:="https://oapi.dingtalk.com/robot/send?access_token=新的token" keyword:=巡逻告警
+export DINGTALK_WEBHOOK_URL="钉钉机器人webhook完整地址"
+```
+
+`car_notify/launch/dingtalk_notify.launch.py` 默认传空 `webhook_url`，节点会自动回退到环境变量 `DINGTALK_WEBHOOK_URL`。如果 launch 传入 `webhook_url` 参数，则会覆盖环境变量。
+
+默认关键词是 `巡逻告警`，代码会把它同时放进 markdown `title` 和正文，避免关键词校验拦截。要换机器人，可以设置环境变量，也可以启动时用参数覆盖：
+
+```bash
+ros2 launch car_notify dingtalk_notify.launch.py webhook_url:="钉钉机器人webhook完整地址" keyword:=巡逻告警
 ```
 
 官方文档：

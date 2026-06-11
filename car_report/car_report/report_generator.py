@@ -14,7 +14,7 @@ from pathlib import Path
 DEFAULT_ENDPOINT = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
 DEFAULT_MODEL = 'glm-4v-flash'
 DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024
-BIGMODEL_API_KEY = '63023e7229c04850a90557fe96ede2fa.8YVCP4HcjEt5mmw4'
+BIGMODEL_API_KEY_ENV_NAMES = ('BIGMODEL_API_KEY', 'ZHIPUAI_API_KEY')
 API_TEST_EVENT = {
     'time': '2026-05-11T21:30:12+08:00',
     'event_type': 'object_detected',
@@ -35,6 +35,16 @@ def default_output_dir():
 
 def expand_path(path):
     return Path(os.path.expanduser(path)).resolve()
+
+
+def get_api_key(explicit=''):
+    if explicit:
+        return explicit
+    for name in BIGMODEL_API_KEY_ENV_NAMES:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return ''
 
 
 def find_latest_events_file(output_dir):
@@ -247,6 +257,7 @@ def parse_args(argv=None):
     parser.add_argument('--max-image-bytes', type=int, default=DEFAULT_MAX_IMAGE_BYTES, help='max image bytes sent to GLM in vision mode')
     parser.add_argument('--model', default=DEFAULT_MODEL, help='BigModel model id')
     parser.add_argument('--endpoint', default=DEFAULT_ENDPOINT, help='BigModel chat completions endpoint')
+    parser.add_argument('--api-key', default='', help='BigModel API key; defaults to BIGMODEL_API_KEY or ZHIPUAI_API_KEY')
     parser.add_argument('--temperature', type=float, default=0.2, help='generation temperature')
     parser.add_argument('--timeout', type=float, default=60.0, help='HTTP timeout seconds')
     parser.add_argument('--api-test', action='store_true', help='call GLM with a built-in event and print test input plus answer')
@@ -255,13 +266,17 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    api_key = get_api_key(args.api_key)
+    if not api_key:
+        raise SystemExit('BigModel API key is not configured; set BIGMODEL_API_KEY or ZHIPUAI_API_KEY')
+
     if args.api_test:
         messages = build_messages([API_TEST_EVENT], 'text', 0, args.max_image_bytes)
         print('=== API test input ===')
         print(extract_user_text(messages))
         print('\n=== API test answer ===')
         answer = call_bigmodel(
-            api_key=BIGMODEL_API_KEY,
+            api_key=api_key,
             endpoint=args.endpoint,
             model=args.model,
             messages=messages,
@@ -278,7 +293,6 @@ def main(argv=None):
         raise SystemExit(f'no events found in {events_file}')
 
     messages = build_messages(events, args.mode, args.max_images, args.max_image_bytes)
-    api_key = BIGMODEL_API_KEY
 
     report = call_bigmodel(
         api_key=api_key,

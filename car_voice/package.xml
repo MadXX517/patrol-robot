@@ -1,23 +1,20 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>car_report</name>
+  <name>car_voice</name>
   <version>0.0.0</version>
-  <description>Visual event recording and GLM report generation for the patrol robot.</description>
+  <description>Voice command bridge for the patrol robot.</description>
   <maintainer email="yeahbot@todo.todo">yeahbot</maintainer>
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
-  <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
   <depend>interfaces</depend>
-  <depend>cv_bridge</depend>
-  <depend>ament_index_python</depend>
-  <exec_depend>python3-opencv</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>car_yolo</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

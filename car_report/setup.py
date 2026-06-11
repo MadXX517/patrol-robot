@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'event_recorder = car_report.event_recorder:main',
             'report_generator = car_report.report_generator:main',
+            'report_service = car_report.report_service:main',
         ],
     },
 )

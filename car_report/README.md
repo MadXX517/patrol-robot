@@ -73,7 +73,7 @@
 - `report_generator --mode text` 使用文本对话：只把事件 JSON 摘要发给 GLM，不发送图片。
 - `report_generator --mode vision` 使用图片理解：在事件摘要外，额外发送最多 `--max-images` 张事件截图给 GLM 复核画面。
 
-API Key 当前按私有仓库临时方案处理，写死在 `car_report/car_report/report_generator.py` 的 `BIGMODEL_API_KEY` 中。
+API Key 不再写死在代码中。运行前设置环境变量 `BIGMODEL_API_KEY` 或 `ZHIPUAI_API_KEY`，也可以通过 `report_service` 的 `api_key` 参数或 `report_generator --api-key` 临时覆盖。
 
 ## ROS2 环境运行
 
@@ -100,6 +100,7 @@ ros2 launch car_report car_report_yolo.launch.py yolo_show_result:=true
 单独测试 GLM API 连通性：
 
 ```bash
+export BIGMODEL_API_KEY="你的Key"
 ros2 run car_report report_generator --api-test
 ```
 
@@ -162,6 +163,7 @@ ros2 run car_report report_generator --mode vision --max-images 3
 - `--max-image-bytes`：发送给 GLM 的单张图片最大字节数，默认 `5242880`。
 - `--model`：BigModel 模型 ID，默认 `glm-4v-flash`。
 - `--endpoint`：BigModel 对话补全接口。
+- `--api-key`：BigModel API Key；不填时读取 `BIGMODEL_API_KEY` 或 `ZHIPUAI_API_KEY`。
 - `--temperature`：生成随机性，默认 `0.2`。
 - `--timeout`：HTTP 超时时间，默认 `60` 秒。
 
@@ -169,6 +171,7 @@ ros2 run car_report report_generator --mode vision --max-images 3
 
 - `event_recorder = car_report.event_recorder:main`
 - `report_generator = car_report.report_generator:main`
+- `report_service = car_report.report_service:main`
 
 构建并 source 工作区后，下面两个命令应能找到对应入口：
 
