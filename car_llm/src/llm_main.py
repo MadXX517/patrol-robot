@@ -122,6 +122,10 @@ if __name__ == '__main__':
     #   button     = 按 aibox 按钮"按住说话"(需 aibox 通过串口发 llm_mic_start/end)
     parser.add_argument('--mic_trigger', type=str, default='continuous',
                         choices=['continuous', 'button'])
+    # 唤醒词:仅在听到该词后才进入对话;留空("")则不需要唤醒词,听到即应答。
+    parser.add_argument('--wake_word', type=str, default='小星')
+    # 唤醒后无新指令的保持时长(秒),超时自动回到休眠
+    parser.add_argument('--awake_timeout', type=float, default=20.0)
 
     args = parser.parse_args()
 
@@ -150,6 +154,16 @@ if __name__ == '__main__':
     parser_max_sentence_silence = args.max_sentence_silence
     parser_mic_trigger = args.mic_trigger
     print("麦克风触发方式:", parser_mic_trigger)
+
+    # 唤醒词与同音变体(为容错 ASR 识别偏差;小星->小星星/晓星)
+    wake_word = (args.wake_word or "").strip()
+    awake_timeout = args.awake_timeout
+    wake_variants = []
+    if wake_word:
+        wake_variants = [wake_word]
+        if wake_word == '小星':
+            wake_variants += ['小星星', '晓星', '小兴']
+    print("唤醒词:", wake_word if wake_word else "(无,直接对话)")
 
     # 通过queue传递接收到的消息，voice2text -> chat       voice2text -> text2voice       chat -> text2voice      chat -> arm_controller
     # continuous(无按钮):开机即常开麦;button:等待 aibox 按钮触发
@@ -211,6 +225,14 @@ if __name__ == '__main__':
     # asr_result_queue.put("去篮球场里看看谁在打篮球，去水下科研中心跟研究人员见面问好，到动物园看看有什么动物，最后回到出发区")
 
 
+    def _strip_wake(s):
+        """从识别文本中去掉唤醒词及其前后标点,返回剩余指令。"""
+        out = s
+        for w in wake_variants:
+            out = out.replace(w, '')
+        return out.strip('，。！？、；,.!?; \t')
+
+    # 逐句唤醒:每条指令都需带唤醒词(机器人自身回复不含唤醒词,从根本上杜绝回授自循环)
     try:
         while True:
             if tts_result_queue.qsize()>0:
@@ -218,8 +240,10 @@ if __name__ == '__main__':
                 # 播报前暂停麦克风,避免把自己的 TTS 当成输入(防自激励)
                 asr.audio_loop(False)
                 tts_player.say(tts_result)
+                # 关键:say() 返回后扬声器缓冲/房间余音仍在响,先静默缓冲让其衰减,
+                # 期间麦保持暂停,再清空残留,避免把自己的声音/回声当成新指令(防回授死循环)
+                time.sleep(0.8)
                 if parser_mic_trigger == 'continuous':
-                    # 丢弃播报期间可能录入的残留,然后恢复常开聆听
                     while not asr_result_queue.empty():
                         asr_result_queue.get()
                     llm_mic_running = True
@@ -239,8 +263,24 @@ if __name__ == '__main__':
 
                 text = asr_result_queue.get()
                 print("ASR Result:", text)
-                # 将文本发送到解析进程
-                command_queue.put(text)
+                norm = text.replace(' ', '')
+
+                if not wake_word:
+                    command_queue.put(text)  # 无唤醒词:直接处理
+                    continue
+
+                # 逐句唤醒:必须含唤醒词,否则忽略(过滤环境语音 + 机器人自身回声)
+                if not any(w in norm for w in wake_variants):
+                    print('\033[1;33m[忽略] 未含唤醒词「%s」\033[0m' % wake_word)
+                    continue
+
+                remainder = _strip_wake(norm)
+                if remainder:
+                    print('\033[1;32m[唤醒] 指令: %s\033[0m' % remainder)
+                    command_queue.put(remainder)   # "小星,讲个笑话" -> 执行剩余指令
+                else:
+                    print('\033[1;32m[唤醒] 应答\033[0m')
+                    tts_result_queue.put('在,请说')  # 仅唤醒词 -> 应答
 
             # 短暂休眠，减少CPU占用
             time.sleep(0.05)

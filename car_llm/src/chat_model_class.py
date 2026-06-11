@@ -5,7 +5,7 @@ from language_tools import remove_subsentence_if_included
 import yaml
 
 msg_receivce = "在"  # 默认提示语，可以根据需要修改
-wake_up_words = "小甲" # AI助手名称，用来屏蔽防止自我激活
+wake_up_words = "小星" # 唤醒词/助手名,用来屏蔽防止自我激活
 
 class LLMCommandParser():
     def __init__(self, api_key=None,base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", yaml_file=None,tts_queue=None, ros_control_queue=None, model="qwen-flash"):

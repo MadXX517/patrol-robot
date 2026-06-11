@@ -1,6 +1,8 @@
 [
+    {"text": "小星", "weight": 5, "lang": "zh"},
+    {"text": "小星星", "weight": 4, "lang": "zh"},
     {"text": "松甲", "weight": 4, "lang": "zh"},
-    {"text": "小甲", "weight": 4, "lang": "zh"}, 
+    {"text": "小甲", "weight": 4, "lang": "zh"},
 
     {"text": "机械臂", "weight": 4, "lang": "zh"},
     {"text": "机器人", "weight": 4, "lang": "zh"},
