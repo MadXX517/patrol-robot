@@ -117,6 +117,11 @@ if __name__ == '__main__':
     # 是否接入机器人控制(机械臂/底盘);第一阶段默认关闭,仅语音对话
     # 取值型(便于 launch 传参):true/false、1/0、yes/no、on/off
     parser.add_argument('--enable_ros_control', type=str, default='false')
+    # 麦克风触发方式:
+    #   continuous = 持续聆听(常开麦,播报时自动暂停),适用于无按钮的 aibox(默认)
+    #   button     = 按 aibox 按钮"按住说话"(需 aibox 通过串口发 llm_mic_start/end)
+    parser.add_argument('--mic_trigger', type=str, default='continuous',
+                        choices=['continuous', 'button'])
 
     args = parser.parse_args()
 
@@ -143,9 +148,12 @@ if __name__ == '__main__':
     parser_tts_model = args.tts_model
     parser_asr_model = args.asr_model
     parser_max_sentence_silence = args.max_sentence_silence
+    parser_mic_trigger = args.mic_trigger
+    print("麦克风触发方式:", parser_mic_trigger)
 
     # 通过queue传递接收到的消息，voice2text -> chat       voice2text -> text2voice       chat -> text2voice      chat -> arm_controller
-    llm_mic_running=False
+    # continuous(无按钮):开机即常开麦;button:等待 aibox 按钮触发
+    llm_mic_running = (parser_mic_trigger == 'continuous')
     # --- 主程序入口 ---
     asr_result_queue=Queue()
     command_queue=Queue()
@@ -207,25 +215,33 @@ if __name__ == '__main__':
         while True:
             if tts_result_queue.qsize()>0:
                 tts_result=tts_result_queue.get()
+                # 播报前暂停麦克风,避免把自己的 TTS 当成输入(防自激励)
+                asr.audio_loop(False)
                 tts_player.say(tts_result)
+                if parser_mic_trigger == 'continuous':
+                    # 丢弃播报期间可能录入的残留,然后恢复常开聆听
+                    while not asr_result_queue.empty():
+                        asr_result_queue.get()
+                    llm_mic_running = True
 
             if ttyUSB_data_stamp_queue.qsize()>0:
                 data_stamp=ttyUSB_data_stamp_queue.get()
                 if data_stamp[1] == 'llm_mic_start':
                     llm_mic_running=True
-            
+
             asr.audio_loop(llm_mic_running) # 运行在主线程中
 
             # 检查是否有ASR结果
             while not asr_result_queue.empty():
-                llm_mic_running=False # 识别到结果后暂停ASR
-                ttyUSB_send_queue.put('llm_mic_end')
+                if parser_mic_trigger == 'button':
+                    llm_mic_running=False # 按钮模式:识别到结果后暂停,等下次按键
+                    ttyUSB_send_queue.put('llm_mic_end')
 
                 text = asr_result_queue.get()
                 print("ASR Result:", text)
                 # 将文本发送到解析进程
                 command_queue.put(text)
-                
+
             # 短暂休眠，减少CPU占用
             time.sleep(0.05)
 

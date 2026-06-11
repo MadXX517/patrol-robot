@@ -87,6 +87,13 @@ def generate_launch_description():
         description='enable robot control (arm/chassis); first stage keeps it false'
     )
 
+    # 麦克风触发方式:continuous=持续聆听(无按钮 aibox,默认);button=按键按住说话
+    mic_trigger_arg = DeclareLaunchArgument(
+        'mic_trigger',
+        default_value='continuous',
+        description='mic trigger: continuous (always-on, no button) or button'
+    )
+
     # ============================ 实现部分 ============================ #
     # 仅在启用机器人控制时才拉起底盘 car_base(纯语音对话无需底盘)
     base_serial_launch = IncludeLaunchDescription(
@@ -118,7 +125,8 @@ def generate_launch_description():
             '--tts_model', LaunchConfiguration('tts_model'),
             '--asr_model', LaunchConfiguration('asr_model'),
             '--max_sentence_silence', LaunchConfiguration('max_sentence_silence'),
-            '--enable_ros_control', LaunchConfiguration('enable_ros_control')
+            '--enable_ros_control', LaunchConfiguration('enable_ros_control'),
+            '--mic_trigger', LaunchConfiguration('mic_trigger')
         ],
         output='screen',
         emulate_tty=True,
@@ -137,6 +145,7 @@ def generate_launch_description():
     ld.add_action(asr_model_arg)
     ld.add_action(max_sentence_silence_arg)
     ld.add_action(enable_ros_control_arg)
+    ld.add_action(mic_trigger_arg)
     ld.add_action(base_serial_launch)
     ld.add_action(llm_main_process)
     return ld
