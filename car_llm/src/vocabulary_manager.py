@@ -51,15 +51,19 @@ def _write_cache(data):
         print(f"[Vocab] 缓存写入失败(忽略): {e}")
 
 
-def get_vocabulary_id(api_key):
-    """返回可用的 vocabulary_id;失败或无热词时返回 None。"""
+def get_vocabulary_id(api_key, target_model=_TARGET_MODEL):
+    """返回可用的 vocabulary_id;失败或无热词时返回 None。
+
+    target_model:热词表绑定的 ASR 模型,需与实际识别所用模型一致
+    (paraformer-realtime-v2 / fun-asr-realtime 等)。缓存按 (热词内容, 模型) 区分。
+    """
     if not os.path.exists(_VOCAB_JSON):
         return None
     try:
         vocab = _load_vocabulary()
         if not vocab:
             return None
-        digest = _content_hash(vocab, _TARGET_MODEL)
+        digest = _content_hash(vocab, target_model)
 
         cache = _read_cache()
         if cache.get("hash") == digest and cache.get("vocabulary_id"):
@@ -71,7 +75,7 @@ def get_vocabulary_id(api_key):
 
         service = VocabularyService()
         vocabulary_id = service.create_vocabulary(
-            target_model=_TARGET_MODEL,
+            target_model=target_model,
             prefix=_PREFIX,
             vocabulary=vocab,
         )

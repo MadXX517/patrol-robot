@@ -88,7 +88,9 @@ class LLMCommandParser():
                                 # 只在新message出现时播报
                                 if message_text and message_text != message_buffer:
                                     message_buffer = message_text
-                                    message = remove_subsentence_if_included(wake_up_words, message_text, "(已屏蔽)")
+                                    # 不再屏蔽助手名/唤醒词:持续聆听模式下播报时已暂停麦,
+                                    # 无自激励风险;且机器人名("小星")就是唤醒词,屏蔽会使自我介绍变成"(已屏蔽)"
+                                    message = message_text
                                     print(f"\n📢 实时提示信息: {message}")
                                     if enable_tts and self.tts_queue is not None:
                                         self.tts_queue.put(message)

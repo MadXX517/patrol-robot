@@ -99,7 +99,8 @@ class RealTimeASR:
     def _try_load_vocabulary(self):
         try:
             import vocabulary_manager
-            return vocabulary_manager.get_vocabulary_id(self.api_key)
+            # 按实际 ASR 模型注册热词,避免热词表与识别模型不匹配
+            return vocabulary_manager.get_vocabulary_id(self.api_key, self.model)
         except Exception as e:
             print(f"[ASR] 未启用热词(降级): {e}")
             return None

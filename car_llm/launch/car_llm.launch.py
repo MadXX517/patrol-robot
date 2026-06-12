@@ -50,7 +50,7 @@ def generate_launch_description():
     # ============================ 语言大模型参数 ============================ #
     llm_model_arg = DeclareLaunchArgument(
         'llm_model',
-        default_value='qwen-plus', # 语言大模型，可用模型名称qwen-max、qwen-plus、qwen-flash、qwen-turbo（已停止更新，不建议使用）
+        default_value='qwen-flash', # 语言大模型：qwen-flash(快/省,默认)、qwen-plus(均衡)、qwen-max(质量最高)
         description='LLM model for command parsing'
     )
     
@@ -63,14 +63,14 @@ def generate_launch_description():
 
     tts_model_arg = DeclareLaunchArgument(
         'tts_model',
-        default_value='qwen-tts', # 文字转语音tts大模型：qwen3-tts-flash、qwen-tts
+        default_value='qwen3-tts-flash', # 文字转语音tts大模型：qwen3-tts-flash(49音色/低延迟)、qwen-tts(旧)
         description='TTS model'
     )
 
     # ============================ 语音转文字（即语音识别）大模型参数 ============================ #
     asr_model_arg = DeclareLaunchArgument(
         'asr_model',
-        default_value='paraformer-realtime-v2', # 自动语音转文字asr大模型：paraformer-realtime-v2
+        default_value='fun-asr-realtime', # asr大模型：fun-asr-realtime(官方推荐/方言强)、paraformer-realtime-v2(旧)
         description='ASR model'
     )
 

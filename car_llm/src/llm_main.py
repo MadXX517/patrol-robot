@@ -109,10 +109,10 @@ if __name__ == '__main__':
     parser.add_argument('--aibox_serial_port', type=str, default='/dev/aibox')
     parser.add_argument('--baudrate', type=int, default=115200)
     parser.add_argument('--sound_volume', type=int, default=85)
-    parser.add_argument('--llm_model', type=str, default='qwen-plus')
+    parser.add_argument('--llm_model', type=str, default='qwen-flash')
     parser.add_argument('--tts_voice', type=str, default='Serena')
-    parser.add_argument('--tts_model', type=str, default='qwen-tts')
-    parser.add_argument('--asr_model', type=str, default='paraformer-realtime-v2')
+    parser.add_argument('--tts_model', type=str, default='qwen3-tts-flash')
+    parser.add_argument('--asr_model', type=str, default='fun-asr-realtime')
     parser.add_argument('--max_sentence_silence', type=int, default=800)
     # 是否接入机器人控制(机械臂/底盘);第一阶段默认关闭,仅语音对话
     # 取值型(便于 launch 传参):true/false、1/0、yes/no、on/off
