@@ -57,7 +57,7 @@ def generate_launch_description():
     # ============================ 文字转语音（即语音生成）大模型参数 ============================ #
     tts_voice_arg = DeclareLaunchArgument(
         'tts_voice',
-        default_value='Serena', # 支持音色'Cherry', 'Ethan', 'Serena','Chelsie',通义千问提供以上音色。
+        default_value='Neil', # 音色(qwen3-tts-flash):Neil(专业播报/默认)、Ethan(活力)、Andre(沉稳)、Moon(干脆)、Serena(温柔)等
         description='Voice for TTS playback'
     )
 

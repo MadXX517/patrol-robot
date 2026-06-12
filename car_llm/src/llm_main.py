@@ -110,7 +110,7 @@ if __name__ == '__main__':
     parser.add_argument('--baudrate', type=int, default=115200)
     parser.add_argument('--sound_volume', type=int, default=85)
     parser.add_argument('--llm_model', type=str, default='qwen-flash')
-    parser.add_argument('--tts_voice', type=str, default='Serena')
+    parser.add_argument('--tts_voice', type=str, default='Neil')
     parser.add_argument('--tts_model', type=str, default='qwen3-tts-flash')
     parser.add_argument('--asr_model', type=str, default='fun-asr-realtime')
     parser.add_argument('--max_sentence_silence', type=int, default=800)
