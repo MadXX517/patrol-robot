@@ -1,0 +1,284 @@
+:root {
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --text: #17202a;
+  --muted: #607080;
+  --line: #d8e0e8;
+  --blue: #2563eb;
+  --green: #11845b;
+  --orange: #b45309;
+  --red: #c62828;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.topbar {
+  min-height: 76px;
+  padding: 14px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: 16px;
+}
+
+#statusText {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status-group,
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  min-width: 72px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: #f8fafc;
+  text-align: center;
+  font-size: 13px;
+}
+
+.badge.running {
+  color: #ffffff;
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.layout {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  grid-template-areas:
+    "video control"
+    "events control";
+  gap: 16px;
+}
+
+.video-panel,
+.events-panel,
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.video-panel {
+  grid-area: video;
+  min-width: 0;
+}
+
+.control-panel {
+  grid-area: control;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.events-panel {
+  grid-area: events;
+  min-height: 220px;
+}
+
+.panel,
+.panel-head {
+  padding: 14px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.topic {
+  color: var(--muted);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.video-frame {
+  background: #111827;
+  aspect-ratio: 16 / 9;
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 0 0 8px 8px;
+}
+
+#videoStream {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.btn,
+.drive {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--text);
+  font-size: 14px;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+.btn {
+  padding: 0 14px;
+  flex: 1 1 auto;
+}
+
+.btn:hover,
+.drive:hover {
+  border-color: #94a3b8;
+  background: #eef2f7;
+}
+
+.primary {
+  color: #ffffff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.primary:hover {
+  background: #1d4ed8;
+}
+
+.danger {
+  color: #ffffff;
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.danger:hover {
+  background: #a61f1f;
+}
+
+.full {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.drive-pad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(76px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.drive {
+  width: 100%;
+  aspect-ratio: 1.65 / 1;
+  font-weight: 600;
+}
+
+.drive.empty {
+  visibility: hidden;
+  cursor: default;
+}
+
+.drive.stop {
+  color: #ffffff;
+  background: var(--orange);
+  border-color: var(--orange);
+}
+
+.hint {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.events-list {
+  padding: 8px 14px 14px;
+  max-height: 310px;
+  overflow: auto;
+}
+
+.event-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+}
+
+.event-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.event-meta {
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.empty-state {
+  color: var(--muted);
+  padding: 24px 0;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "video"
+      "control"
+      "events";
+  }
+
+  .control-panel {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .video-frame {
+    min-height: 210px;
+  }
+}

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>巡逻小车操作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>巡逻小车操作台</h1>
+      <p id="statusText">正在连接后端...</p>
+    </div>
+    <div class="status-group">
+      <span id="coreBadge" class="badge">core</span>
+      <span id="reportBadge" class="badge">report</span>
+      <span id="notifyBadge" class="badge">notify</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="video-panel">
+      <div class="panel-head">
+        <h2>实时画面</h2>
+        <span id="videoTopic" class="topic">/camera/color/image_raw</span>
+      </div>
+      <div class="video-frame">
+        <img id="videoStream" alt="实时画面">
+      </div>
+    </section>
+
+    <section class="control-panel">
+      <div class="panel">
+        <h2>模式</h2>
+        <div class="button-row">
+          <button id="manualBtn" class="btn primary">普通操作</button>
+          <button id="reportBtn" class="btn primary">识别记录</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>遥控</h2>
+        <div class="drive-pad">
+          <button class="drive empty" disabled></button>
+          <button class="drive" data-linear="0.18" data-angular="0">前进</button>
+          <button class="drive empty" disabled></button>
+          <button class="drive" data-linear="0" data-angular="0.8">左转</button>
+          <button id="stopBtn" class="drive stop">停止</button>
+          <button class="drive" data-linear="0" data-angular="-0.8">右转</button>
+          <button class="drive empty" disabled></button>
+          <button class="drive" data-linear="-0.14" data-angular="0">后退</button>
+          <button class="drive empty" disabled></button>
+        </div>
+        <button id="estopBtn" class="btn danger full">急停</button>
+      </div>
+
+      <div class="panel">
+        <h2>事件与通知</h2>
+        <div class="button-row">
+          <button id="notifyStartBtn" class="btn">启动钉钉</button>
+          <button id="notifyStopBtn" class="btn">停止钉钉</button>
+        </div>
+        <div class="button-row">
+          <button id="reportTextBtn" class="btn">文本报告</button>
+          <button id="reportVisionBtn" class="btn">图文报告</button>
+        </div>
+        <p id="reportJob" class="hint">报告任务：空闲</p>
+      </div>
+    </section>
+
+    <section class="events-panel">
+      <div class="panel-head">
+        <h2>识别事件</h2>
+        <span id="eventCount" class="topic">0 条</span>
+      </div>
+      <div id="eventsList" class="events-list"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
