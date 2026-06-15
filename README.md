@@ -47,33 +47,53 @@ http://RK3588_IP:8000
 http://192.168.0.102:8000
 ```
 
-打开网页后，普通前方画面会自动启动。后续普通操作、功能中心、识别记录、钉钉通知、遥控、底盘/舵机复位和报告生成都在网页按钮里完成。
+打开网页后，普通前方画面会自动启动。后续普通操作、功能中心、识别记录、钉钉通知、遥控、底盘复位、云台控制和报告生成都在网页按钮里完成。
 
 如果同学已经配置了自动 source，可以不手动执行 `source install/setup.bash`。如果出现 `package 'car_web' not found`，先执行 source；还不行就重新 build。
 
 ## 模块单独测试
 
-如果网页里某一块不正常，先在网页点“全部停止”，或者关掉 `car_web` 终端，再按下面拆开测，避免节点竞争。
+如果网页里某一块不正常，先在网页点“全部停止”，或者关掉 `car_web` 终端，再按下面拆开测，避免相机、底盘串口、8080 端口或 YOLO 节点竞争。
 
-只测基础画面和底盘基础链路：
+终端 1：只启动基础链路，包括底盘串口、相机和 `web_video_server`：
 
 ```bash
 ros2 launch car_web car_web_core.launch.py
 ```
 
-浏览器直接看普通相机流：
+终端 2：检查普通相机是否有发布者和帧率：
+
+```bash
+ros2 topic info -v /camera/color/image_raw
+ros2 topic hz /camera/color/image_raw
+```
+
+浏览器：先打开视频服务首页，看它列出了哪些图像话题：
+
+```text
+http://RK3588_IP:8080/
+```
+
+浏览器：直接看普通相机流：
 
 ```text
 http://RK3588_IP:8080/stream?topic=/camera/color/image_raw&type=mjpeg
 ```
 
-只测 YOLO + report 识别记录链路。这个命令依赖上面的 core 已经在另一个终端运行：
+终端 3：在终端 1 保持运行时，只启动 YOLO + report 识别记录链路：
 
 ```bash
 ros2 launch car_report car_report_yolo.launch.py yolo_pub_result_img:=true yolo_conf_thres:=0.5 min_score:=0.5
 ```
 
-浏览器直接看带置信框的 YOLO 画面：
+终端 4：检查 YOLO 画面和事件是否有输出：
+
+```bash
+ros2 topic hz /result_img
+ros2 topic echo /car_report/event
+```
+
+浏览器：直接看带置信框的 YOLO 画面：
 
 ```text
 http://RK3588_IP:8080/stream?topic=/result_img&type=mjpeg
@@ -163,7 +183,7 @@ ros2 run car_notify dingtalk_notifier --webhook-test
 - 每次新增 ROS2 包、改 `setup.py`、改 `package.xml`、改 launch 文件后，都要重新 `colcon build`。
 - 推荐继续使用 `--symlink-install`；网页静态文件已兼容这种构建方式。
 - 只改 Python、HTML、CSS、JS 时，`--symlink-install` 下通常能直接反映；上车演示前仍建议重新 build 一次。
-- 网页操作台 v1 只接遥控、底盘/舵机复位、普通视频、YOLO 事件记录、钉钉通知和报告；导航、SLAM、语音、机械臂后续稳定后再接入。
+- 网页操作台 v1 只接遥控、底盘复位、云台控制、普通视频、YOLO 事件记录、钉钉通知和报告；导航、SLAM、语音、机械臂后续稳定后再接入。
 - 小车遥控有风险，测试时先架空轮子或确保周围安全。
 
 

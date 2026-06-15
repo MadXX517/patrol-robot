@@ -51,27 +51,47 @@ http://192.168.0.102:8000
 
 ## 模块单独测试
 
-如果网页内嵌画面没有图，先点页面里的“打开视频直链”。如果直链也没有图，再关掉 `car_web` 或点击“全部停止”，按模块拆开测试。
+如果网页内嵌画面没有图，先点页面里的“打开视频直链”和“视频服务首页”。如果直链也没有图，再关掉 `car_web` 或点击“全部停止”，按模块拆开测试。
 
-基础链路单测：
+终端 1：只启动基础链路，包括底盘串口、相机和 `web_video_server`：
 
 ```bash
 ros2 launch car_web car_web_core.launch.py
 ```
 
-普通相机直链：
+终端 2：检查普通相机是否有发布者和帧率：
+
+```bash
+ros2 topic info -v /camera/color/image_raw
+ros2 topic hz /camera/color/image_raw
+```
+
+浏览器：先打开视频服务首页，确认 `web_video_server` 能看到哪些图像话题：
+
+```text
+http://RK3588_IP:8080/
+```
+
+浏览器：直接看普通相机流：
 
 ```text
 http://RK3588_IP:8080/stream?topic=/camera/color/image_raw&type=mjpeg
 ```
 
-YOLO + report 单测。需要保持基础链路已经在另一个终端运行：
+终端 3：在终端 1 保持运行时，只启动 YOLO + report 识别记录链路：
 
 ```bash
 ros2 launch car_report car_report_yolo.launch.py yolo_pub_result_img:=true yolo_conf_thres:=0.5 min_score:=0.5
 ```
 
-YOLO 置信框直链：
+终端 4：检查 YOLO 画面和 report 事件是否有输出：
+
+```bash
+ros2 topic hz /result_img
+ros2 topic echo /car_report/event
+```
+
+浏览器：直接看 YOLO 置信框画面：
 
 ```text
 http://RK3588_IP:8080/stream?topic=/result_img&type=mjpeg
@@ -149,9 +169,10 @@ car_notify/launch/dingtalk_notify.launch.py cooldown_sec:=60
 - 关闭识别：关闭 report 和 notify，core 保持运行，画面回到普通相机。
 - 全部停止：关闭 Web 自己启动的 core、report、notify，并发送零速度。
 - 功能列表：打开同页功能中心，点击功能卡片只看详情，不直接启动。
-- 底盘复位：连续发布零速度到 `/cmd_vel`，相当于轮子/底盘停车复位。
-- 舵机复位：通过 `/ik_states` 让摄像头云台第 0 号舵机回中。
-- 左看/右看：通过 `/ik_states` 微调摄像头云台第 0 号舵机；上看/下看暂时只是预留。
+- 底盘复位：连续发布零速度到 `/cmd_vel`，相当于轮子/底盘停车复位；它不控制云台，也不关闭节点。
+- 云台回中：通过 `/ik_states` 设置 `joint0=0`、`joint3=1.2`，让摄像头云台回到中位。
+- 左看/右看：通过 `/ik_states` 微调 `joint0`。
+- 上看/下看：通过 `/ik_states` 微调 `joint3`。如果实车方向和按钮文字相反，后续只需要交换加减方向。
 - 启动钉钉/停止钉钉：只控制钉钉通知节点。
 - 文本报告：调用 `report_generator --mode text`，只把事件摘要发给 GLM。
 - 图文报告：调用 `report_generator --mode vision --max-images 3`，把事件摘要和最多 3 张截图发给 GLM。
@@ -177,6 +198,8 @@ car_notify/launch/dingtalk_notify.launch.py cooldown_sec:=60
 - 识别记录：`/result_img`
 
 视频区域右上角有“打开视频直链”。如果页面内没有图，先点这个直链判断是网页嵌入问题，还是 `web_video_server`/ROS 图像话题没有输出。
+
+视频区只保留一行诊断提示，会显示 8080 是否连上、当前图像话题是否有发布者。更详细的图像话题列表请点“视频服务首页”。
 
 ## 注意事项
 
@@ -218,13 +241,13 @@ ros2 topic echo /car_report/event
 ros2 topic echo /cmd_vel
 ```
 
-看舵机复位/左右微调是否发布关节消息：
+看云台回中/上下左右微调是否发布关节消息：
 
 ```bash
 ros2 topic echo /ik_states
 ```
 
-`/ik_states` 的 `position` 应包含 7 个值：前 6 个是关节角，最后 1 个是动作时间。
+`/ik_states` 的 `position` 应包含 7 个值：前 6 个是关节角，最后 1 个是动作时间。左看/右看会改变 `joint0`，上看/下看会改变 `joint3`，云台回中会把 `joint0` 设为 `0`、`joint3` 设为约 `1.2`。
 
 单独测试 GLM API：
 

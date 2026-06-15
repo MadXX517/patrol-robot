@@ -23,7 +23,6 @@ setup(
     maintainer_email='yeahbot@todo.todo',
     description='Browser dashboard for robot remote control and patrol event operations',
     license='TODO: License declaration',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'dashboard_server = car_web.dashboard_server:main',

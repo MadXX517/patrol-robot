@@ -17,6 +17,8 @@ const api = {
   servoReset: '/api/servo/reset',
   cameraLeft: '/api/servo/camera_left',
   cameraRight: '/api/servo/camera_right',
+  cameraUp: '/api/servo/camera_up',
+  cameraDown: '/api/servo/camera_down',
   generateReport: '/api/report/generate',
 };
 
@@ -29,6 +31,7 @@ const state = {
   features: [],
   selectedFeatureId: '',
   activeFeature: '',
+  videoFailed: false,
 };
 
 const els = {
@@ -39,6 +42,7 @@ const els = {
   videoTopic: document.getElementById('videoTopic'),
   videoHint: document.getElementById('videoHint'),
   videoLink: document.getElementById('videoLink'),
+  videoHomeLink: document.getElementById('videoHomeLink'),
   videoStream: document.getElementById('videoStream'),
   videoError: document.getElementById('videoError'),
   eventsList: document.getElementById('eventsList'),
@@ -63,6 +67,8 @@ const els = {
   featureStopBtn: document.getElementById('featureStopBtn'),
   cameraLeftBtn: document.getElementById('cameraLeftBtn'),
   cameraRightBtn: document.getElementById('cameraRightBtn'),
+  cameraUpBtn: document.getElementById('cameraUpBtn'),
+  cameraDownBtn: document.getElementById('cameraDownBtn'),
   chassisResetBtn: document.getElementById('chassisResetBtn'),
   servoResetBtn: document.getElementById('servoResetBtn'),
   notifyStartBtn: document.getElementById('notifyStartBtn'),
@@ -99,6 +105,10 @@ function buildVideoUrl(videoPath) {
   return `http://${window.location.hostname}:8080${path}${path.includes('?') ? '&' : '?'}_=${Date.now()}`;
 }
 
+function buildVideoHomeUrl() {
+  return `http://${window.location.hostname}:8080/`;
+}
+
 function setVideo(data, force = false) {
   const topic = data.video_topic || '/camera/color/image_raw';
   const videoPath = data.video_url || `/stream?topic=${topic}&type=mjpeg`;
@@ -106,14 +116,16 @@ function setVideo(data, force = false) {
 
   els.videoTopic.textContent = topic;
   els.videoLink.href = href;
+  els.videoHomeLink.href = buildVideoHomeUrl();
   els.videoHint.textContent = data.stream_hint || '如果画面不显示，点击视频直链排查。';
 
-  if (!force && topic === state.videoTopic && videoPath === state.videoUrl && els.videoStream.src) {
+  if (!force && !state.videoFailed && topic === state.videoTopic && videoPath === state.videoUrl && els.videoStream.src) {
     return;
   }
 
   state.videoTopic = topic;
   state.videoUrl = videoPath;
+  state.videoFailed = false;
   els.videoError.textContent = '视频加载中';
   els.videoError.classList.remove('hidden');
   els.videoStream.src = href;
@@ -135,6 +147,8 @@ function updateButtons(processes) {
   els.chassisResetBtn.disabled = !coreRunning;
   els.cameraLeftBtn.disabled = !coreRunning;
   els.cameraRightBtn.disabled = !coreRunning;
+  els.cameraUpBtn.disabled = !coreRunning;
+  els.cameraDownBtn.disabled = !coreRunning;
   els.servoResetBtn.disabled = !coreRunning;
   updateFeatureDetailButtons();
 }
@@ -409,7 +423,9 @@ function bindControls() {
   els.chassisResetBtn.addEventListener('click', () => postAction(api.chassisReset, '底盘复位'));
   els.cameraLeftBtn.addEventListener('click', () => postAction(api.cameraLeft, '摄像头左看'));
   els.cameraRightBtn.addEventListener('click', () => postAction(api.cameraRight, '摄像头右看'));
-  els.servoResetBtn.addEventListener('click', () => postAction(api.servoReset, '舵机复位'));
+  els.cameraUpBtn.addEventListener('click', () => postAction(api.cameraUp, '摄像头上看'));
+  els.cameraDownBtn.addEventListener('click', () => postAction(api.cameraDown, '摄像头下看'));
+  els.servoResetBtn.addEventListener('click', () => postAction(api.servoReset, '云台回中'));
   document.getElementById('stopBtn').addEventListener('click', stopDrive);
 
   document.querySelectorAll('.drive[data-linear]').forEach((button) => {
@@ -426,9 +442,11 @@ function bindControls() {
   });
 
   els.videoStream.addEventListener('load', () => {
+    state.videoFailed = false;
     els.videoError.classList.add('hidden');
   });
   els.videoStream.addEventListener('error', () => {
+    state.videoFailed = true;
     els.videoError.textContent = '视频未加载，点击右上角视频直链排查';
     els.videoError.classList.remove('hidden');
   });

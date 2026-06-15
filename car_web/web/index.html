@@ -29,6 +29,7 @@
         <div class="video-meta">
           <span id="videoTopic" class="topic">/camera/color/image_raw</span>
           <a id="videoLink" class="video-link" target="_blank" rel="noreferrer">打开视频直链</a>
+          <a id="videoHomeLink" class="video-link" target="_blank" rel="noreferrer">视频服务首页</a>
         </div>
       </div>
       <div class="video-frame">
@@ -91,18 +92,18 @@
 
       <div class="panel">
         <h2>复位与云台</h2>
-        <p class="hint compact">底盘复位只发送零速度；舵机复位让摄像头云台回中。</p>
+        <p class="hint compact">底盘复位只发送零速度；云台回中让摄像头回到中位。</p>
         <div class="button-row grid-two compact">
           <button id="chassisResetBtn" class="btn">底盘复位</button>
-          <button id="servoResetBtn" class="btn primary">舵机复位</button>
+          <button id="servoResetBtn" class="btn">云台回中</button>
         </div>
         <div class="button-row grid-three compact">
           <button id="cameraLeftBtn" class="btn">左看</button>
-          <button class="btn" disabled>上看预留</button>
+          <button id="cameraUpBtn" class="btn">上看</button>
           <button id="cameraRightBtn" class="btn">右看</button>
         </div>
         <div class="button-row compact">
-          <button class="btn" disabled>下看预留</button>
+          <button id="cameraDownBtn" class="btn">下看</button>
         </div>
       </div>
 

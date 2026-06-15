@@ -5,6 +5,7 @@ import mimetypes
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -44,6 +45,12 @@ JOINT_NAME_TO_INDEX = {
 SERVO_STEP_RAD = 0.2617993878  # 15 degrees
 SERVO_LIMIT_RAD = 1.5707963268  # 90 degrees
 SERVO_DURATION_MS = 500.0
+CAMERA_YAW_INDEX = 0
+CAMERA_PITCH_INDEX = 3
+CAMERA_YAW_CENTER = 0.0
+CAMERA_PITCH_CENTER = 1.2
+CAMERA_PITCH_MIN = 0.8
+CAMERA_PITCH_MAX = 1.6
 FEATURES = [
     {
         'id': 'visual_patrol',
@@ -214,14 +221,20 @@ class DashboardNode(Node):
             report_job = dict(self.report_job) if self.report_job else None
             core_running = self._is_running('core')
             report_running = self._is_running('report')
+            current_video_topic = self.current_video_topic
+
+        video_diagnostics = self.video_diagnostics(current_video_topic)
+
+        with self.lock:
             return {
                 'ok': True,
                 'mode': self.current_mode,
                 'active_feature': self.active_feature,
-                'video_topic': self.current_video_topic,
-                'video_url': self.video_url(self.current_video_topic),
-                'stream_hint': '如果画面不显示，先点视频直链确认 web_video_server 是否有图。',
+                'video_topic': current_video_topic,
+                'video_url': self.video_url(current_video_topic),
+                'stream_hint': self.video_hint(current_video_topic, video_diagnostics),
                 'web_video_port': WEB_VIDEO_PORT,
+                'video_diagnostics': video_diagnostics,
                 'processes': processes,
                 'events_count': len(self.events),
                 'last_event': self.events[-1] if self.events else None,
@@ -373,34 +386,55 @@ class DashboardNode(Node):
         return {'ok': True, 'message': '底盘已复位，已连续发送零速度'}
 
     def servo_reset(self):
-        self.publish_camera_servo(0.0)
-        return {'ok': True, 'message': '舵机已复位'}
+        self.publish_camera_joints({
+            CAMERA_YAW_INDEX: CAMERA_YAW_CENTER,
+            CAMERA_PITCH_INDEX: CAMERA_PITCH_CENTER,
+        })
+        return {'ok': True, 'message': '云台已回中'}
 
     def camera_left(self):
         with self.lock:
-            target = self.current_joints[0] - SERVO_STEP_RAD
-        self.publish_camera_servo(target)
+            target = self.current_joints[CAMERA_YAW_INDEX] - SERVO_STEP_RAD
+        self.publish_camera_joint(CAMERA_YAW_INDEX, target, -SERVO_LIMIT_RAD, SERVO_LIMIT_RAD)
         return {'ok': True, 'message': '摄像头左转'}
 
     def camera_right(self):
         with self.lock:
-            target = self.current_joints[0] + SERVO_STEP_RAD
-        self.publish_camera_servo(target)
+            target = self.current_joints[CAMERA_YAW_INDEX] + SERVO_STEP_RAD
+        self.publish_camera_joint(CAMERA_YAW_INDEX, target, -SERVO_LIMIT_RAD, SERVO_LIMIT_RAD)
         return {'ok': True, 'message': '摄像头右转'}
 
-    def publish_camera_servo(self, angle_rad):
-        if not self._is_running('core'):
-            raise DashboardError('基础节点未运行，不能控制舵机。请先启动普通操作或识别记录。', 409)
+    def camera_up(self):
+        with self.lock:
+            target = self.current_joints[CAMERA_PITCH_INDEX] + SERVO_STEP_RAD
+        self.publish_camera_joint(CAMERA_PITCH_INDEX, target, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX)
+        return {'ok': True, 'message': '摄像头上看'}
 
-        angle = self._clamp(float(angle_rad), -SERVO_LIMIT_RAD, SERVO_LIMIT_RAD)
+    def camera_down(self):
+        with self.lock:
+            target = self.current_joints[CAMERA_PITCH_INDEX] - SERVO_STEP_RAD
+        self.publish_camera_joint(CAMERA_PITCH_INDEX, target, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX)
+        return {'ok': True, 'message': '摄像头下看'}
+
+    def publish_camera_joint(self, joint_index, angle_rad, lower, upper):
+        self.publish_camera_joints({
+            int(joint_index): self._clamp(float(angle_rad), lower, upper),
+        })
+
+    def publish_camera_joints(self, updates):
+        if not self._is_running('core'):
+            raise DashboardError('基础节点未运行，不能控制云台。请先启动普通操作或识别记录。', 409)
+
         with self.lock:
             if not self.have_joint_state:
-                raise DashboardError('尚未收到 /joint_states，稍等底盘节点发布关节状态后再控制舵机。', 409)
+                raise DashboardError('尚未收到 /joint_states，稍等底盘节点发布关节状态后再控制云台。', 409)
 
             joints = list(self.current_joints)
             if len(joints) < len(JOINT_NAMES):
                 joints.extend([0.0] * (len(JOINT_NAMES) - len(joints)))
-            joints[0] = angle
+            for joint_index, angle in updates.items():
+                if 0 <= int(joint_index) < len(JOINT_NAMES):
+                    joints[int(joint_index)] = float(angle)
             self.current_joints = joints[:len(JOINT_NAMES)]
             positions = list(self.current_joints)
 
@@ -512,6 +546,40 @@ class DashboardNode(Node):
     @staticmethod
     def video_url(topic):
         return '/stream?topic=%s&type=mjpeg' % str(topic or CAMERA_TOPIC)
+
+    def video_diagnostics(self, current_topic):
+        current_topic = current_topic or CAMERA_TOPIC
+        return {
+            'web_video_reachable': self._web_video_reachable(),
+            'core_running': self._is_running('core'),
+            'camera_publishers': self._publisher_count(CAMERA_TOPIC),
+            'result_publishers': self._publisher_count(RESULT_TOPIC),
+            'current_topic_publishers': self._publisher_count(current_topic),
+        }
+
+    @staticmethod
+    def video_hint(current_topic, diagnostics):
+        if not diagnostics.get('web_video_reachable'):
+            return '8080 视频服务未连接；先确认 core 正在运行，或点击视频服务首页排查。'
+        if current_topic == RESULT_TOPIC and diagnostics.get('result_publishers', 0) <= 0:
+            return '8080 已连接，但 /result_img 暂无发布者；先启动识别记录。'
+        if current_topic == CAMERA_TOPIC and diagnostics.get('camera_publishers', 0) <= 0:
+            return '8080 已连接，但相机话题暂无发布者；检查 car_camera 是否启动。'
+        return '8080 已连接，当前视频话题发布者 %d 个。' % diagnostics.get('current_topic_publishers', 0)
+
+    def _publisher_count(self, topic):
+        try:
+            return len(self.get_publishers_info_by_topic(topic))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _web_video_reachable():
+        try:
+            with socket.create_connection(('127.0.0.1', WEB_VIDEO_PORT), timeout=0.2):
+                return True
+        except OSError:
+            return False
 
     def start_process(self, name, command):
         with self.lock:
@@ -652,6 +720,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 result = dashboard.camera_left()
             elif self.path == '/api/servo/camera_right':
                 result = dashboard.camera_right()
+            elif self.path == '/api/servo/camera_up':
+                result = dashboard.camera_up()
+            elif self.path == '/api/servo/camera_down':
+                result = dashboard.camera_down()
             else:
                 result = {'ok': False, 'error': 'not found'}
                 self.send_json(result, 404)
