@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>巡逻小车操作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>巡逻小车操作台</h1>
+      <p id="statusText">正在连接后端...</p>
+    </div>
+    <div class="status-group">
+      <span id="coreBadge" class="badge">core</span>
+      <span id="reportBadge" class="badge">report</span>
+      <span id="notifyBadge" class="badge">notify</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="video-panel">
+      <div class="panel-head">
+        <div>
+          <h2>实时画面</h2>
+          <p id="videoHint" class="hint compact">等待视频服务...</p>
+        </div>
+        <div class="video-meta">
+          <span id="videoTopic" class="topic">/camera/color/image_raw</span>
+          <a id="videoLink" class="video-link" target="_blank" rel="noreferrer">打开视频直链</a>
+        </div>
+      </div>
+      <div class="video-frame">
+        <img id="videoStream" alt="实时画面">
+        <div id="videoError" class="video-error">视频加载中</div>
+      </div>
+    </section>
+
+    <section class="control-panel">
+      <div class="panel">
+        <h2>模式</h2>
+        <div class="button-row grid-two">
+          <button id="manualBtn" class="btn primary">普通操作</button>
+          <button id="coreStopBtn" class="btn">关闭基础</button>
+          <button id="reportBtn" class="btn primary">识别记录</button>
+          <button id="reportStopBtn" class="btn">关闭识别</button>
+        </div>
+        <div class="button-row grid-two compact">
+          <button id="featureToggleBtn" class="btn">功能列表</button>
+          <button id="allStopBtn" class="btn danger">全部停止</button>
+        </div>
+      </div>
+
+      <div id="featurePanel" class="panel hidden">
+        <div class="panel-title-row">
+          <h2>功能中心</h2>
+          <button id="featureCloseBtn" class="link-button">收起</button>
+        </div>
+        <div id="featureListView">
+          <p class="hint compact">点击功能只进入详情，不会立即启动节点。</p>
+          <div id="featureGrid" class="feature-grid"></div>
+        </div>
+        <div id="featureDetailView" class="feature-detail hidden">
+          <button id="featureBackBtn" class="link-button">返回功能列表</button>
+          <h3 id="featureDetailName">功能详情</h3>
+          <p id="featureDetailDesc" class="hint compact"></p>
+          <p id="featureDetailStatus" class="hint compact"></p>
+          <div class="button-row grid-two compact">
+            <button id="featureStartBtn" class="btn primary">启动功能</button>
+            <button id="featureStopBtn" class="btn">停止功能</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>遥控</h2>
+        <p class="hint compact">按住方向键才运动，松开自动停车。</p>
+        <div class="drive-pad">
+          <button class="drive empty" disabled></button>
+          <button class="drive" data-linear="0.18" data-angular="0">前进</button>
+          <button class="drive empty" disabled></button>
+          <button class="drive" data-linear="0" data-angular="0.8">左转</button>
+          <button id="stopBtn" class="drive stop">停止</button>
+          <button class="drive" data-linear="0" data-angular="-0.8">右转</button>
+          <button class="drive empty" disabled></button>
+          <button class="drive" data-linear="-0.14" data-angular="0">后退</button>
+          <button class="drive empty" disabled></button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>复位与云台</h2>
+        <p class="hint compact">底盘复位只发送零速度；舵机复位让摄像头云台回中。</p>
+        <div class="button-row grid-two compact">
+          <button id="chassisResetBtn" class="btn">底盘复位</button>
+          <button id="servoResetBtn" class="btn primary">舵机复位</button>
+        </div>
+        <div class="button-row grid-three compact">
+          <button id="cameraLeftBtn" class="btn">左看</button>
+          <button class="btn" disabled>上看预留</button>
+          <button id="cameraRightBtn" class="btn">右看</button>
+        </div>
+        <div class="button-row compact">
+          <button class="btn" disabled>下看预留</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>事件与通知</h2>
+        <div class="button-row">
+          <button id="notifyStartBtn" class="btn">启动钉钉</button>
+          <button id="notifyStopBtn" class="btn">停止钉钉</button>
+        </div>
+        <div class="button-row">
+          <button id="reportTextBtn" class="btn">文本报告</button>
+          <button id="reportVisionBtn" class="btn">图文报告</button>
+        </div>
+        <p id="reportJob" class="hint">报告任务：空闲</p>
+      </div>
+    </section>
+
+    <section class="events-panel">
+      <div class="panel-head">
+        <h2>识别事件</h2>
+        <span id="eventCount" class="topic">0 条</span>
+      </div>
+      <div id="eventsList" class="events-list"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

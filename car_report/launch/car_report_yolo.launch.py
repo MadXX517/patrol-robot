@@ -69,6 +69,11 @@ def generate_launch_description():
         default_value='',
         description='RKNN model file name in car_yolo config, or an absolute path; empty means <yolo_model>.rknn'
     )
+    yolo_conf_thres_arg = DeclareLaunchArgument(
+        'yolo_conf_thres',
+        default_value='0.25',
+        description='YOLO confidence threshold for object detection and annotated result images'
+    )
     yolo_show_result_arg = DeclareLaunchArgument(
         'yolo_show_result',
         default_value='false',
@@ -90,6 +95,7 @@ def generate_launch_description():
             'model': LaunchConfiguration('yolo_model'),
             'rknn_model': LaunchConfiguration('yolo_rknn_model'),
             'image_topic': LaunchConfiguration('image_topic'),
+            'conf_thres': ParameterValue(LaunchConfiguration('yolo_conf_thres'), value_type=float),
             'show_result': ParameterValue(LaunchConfiguration('yolo_show_result'), value_type=bool),
             'pub_result_img': ParameterValue(LaunchConfiguration('yolo_pub_result_img'), value_type=bool),
         }]
@@ -126,6 +132,7 @@ def generate_launch_description():
         yolo_device_arg,
         yolo_model_arg,
         yolo_rknn_model_arg,
+        yolo_conf_thres_arg,
         yolo_show_result_arg,
         yolo_pub_result_img_arg,
         yolo_node,
