@@ -27,6 +27,9 @@ CMD_VEL_TOPIC = '/cmd_vel'
 WEB_VIDEO_PORT = 8080
 IK_TOPIC = '/ik_states'
 JOINT_STATES_TOPIC = '/joint_states'
+PERSON_FOLLOW_RESULT_TOPIC = '/person_follow/result_img'
+PATROL_CMD_TOPIC = '/patrol/command'
+PATROL_STATE_TOPIC = '/person_follow/state'
 JOINT_NAMES = ['joint0', 'joint1', 'joint2', 'joint3', 'joint4', 'joint5']
 JOINT_NAME_TO_INDEX = {
     'joint0': 0,
@@ -63,6 +66,18 @@ FEATURES = [
         'name': '自主巡线',
         'description': '预留接口，后续接 car_vision 或 car_app 巡线。',
         'available': False,
+    },
+    {
+        'id': 'human_follow',
+        'name': '人体跟随',
+        'description': '锁定一人并保持安全距离尾随,云台同步追踪(car_patrol)。',
+        'available': True,
+    },
+    {
+        'id': 'gimbal_track',
+        'name': '云台追踪',
+        'description': '底盘不动,仅云台锁定追踪目标人(car_patrol)。',
+        'available': True,
     },
     {
         'id': 'pose_detect',
@@ -136,10 +151,14 @@ class DashboardNode(Node):
         self.current_joints = [0.0] * len(JOINT_NAMES)
         self.have_joint_state = False
 
+        self.patrol_state = ''
+
         self.cmd_pub = self.create_publisher(Twist, CMD_VEL_TOPIC, 5)
         self.servo_pub = self.create_publisher(JointState, IK_TOPIC, 5)
+        self.patrol_cmd_pub = self.create_publisher(String, PATROL_CMD_TOPIC, 5)
         self.create_subscription(String, EVENT_TOPIC, self.event_callback, 20)
         self.create_subscription(JointState, JOINT_STATES_TOPIC, self.joint_state_callback, 10)
+        self.create_subscription(String, PATROL_STATE_TOPIC, self.patrol_state_callback, 5)
         self.create_timer(0.1, self.drive_timer_callback)
 
         self.http_server = ThreadingHTTPServer(
@@ -216,7 +235,7 @@ class DashboardNode(Node):
         with self.lock:
             processes = {
                 name: self._process_state(name)
-                for name in ('core', 'report', 'notify')
+                for name in ('core', 'report', 'notify', 'follow')
             }
             report_job = dict(self.report_job) if self.report_job else None
             core_running = self._is_running('core')
@@ -242,6 +261,7 @@ class DashboardNode(Node):
                 'last_error': self.last_error,
                 'can_drive': core_running,
                 'can_report': report_running,
+                'patrol_state': self.patrol_state,
             }
 
     def get_events(self):
@@ -262,6 +282,10 @@ class DashboardNode(Node):
             raise DashboardError('%s 还只是预留入口，后续接入对应功能包。' % feature['name'], 501)
         if feature_id == 'visual_patrol':
             return self.start_report_mode()
+        if feature_id == 'human_follow':
+            return self.start_patrol('human_follow', 'follow')
+        if feature_id == 'gimbal_track':
+            return self.start_patrol('gimbal_track', 'track_only')
         raise DashboardError('%s 未配置启动逻辑。' % feature['name'], 501)
 
     def stop_feature(self):
@@ -269,11 +293,53 @@ class DashboardNode(Node):
             active_feature = self.active_feature
         if active_feature == 'visual_patrol':
             return self.stop_report(update_mode=True)
+        if active_feature in ('human_follow', 'gimbal_track'):
+            return self.stop_patrol()
         if not active_feature:
             return self.status()
         with self.lock:
             self.active_feature = ''
         return self.status()
+
+    def start_patrol(self, feature_id, mode):
+        with self.lock:
+            active_feature = self.active_feature
+        if active_feature and active_feature not in ('human_follow', 'gimbal_track'):
+            self.stop_feature()
+        self.start_core()
+        self.start_process('follow', self.follow_command(mode))
+        with self.lock:
+            self.current_mode = feature_id
+            self.current_video_topic = PERSON_FOLLOW_RESULT_TOPIC
+            self.active_feature = feature_id
+        return self.status()
+
+    def stop_patrol(self):
+        self.publish_patrol_command('stop')
+        self.stop_process('follow')
+        self.publish_stop()
+        with self.lock:
+            self.current_video_topic = CAMERA_TOPIC
+            self.current_mode = 'manual' if self._is_running('core') else 'idle'
+            self.active_feature = ''
+            self.patrol_state = ''
+        return self.status()
+
+    def patrol_command(self, payload):
+        cmd = str(payload.get('cmd', '')).strip()
+        if not cmd:
+            raise DashboardError('缺少 cmd 参数。', 400)
+        self.publish_patrol_command(cmd)
+        return {'ok': True, 'cmd': cmd}
+
+    def publish_patrol_command(self, cmd):
+        msg = String()
+        msg.data = str(cmd)
+        self.patrol_cmd_pub.publish(msg)
+
+    def patrol_state_callback(self, msg):
+        with self.lock:
+            self.patrol_state = msg.data
 
     def start_manual_mode(self):
         self.start_core()
@@ -544,6 +610,14 @@ class DashboardNode(Node):
         ]
 
     @staticmethod
+    def follow_command(mode):
+        return [
+            'ros2', 'launch', 'car_patrol', 'human_follow.launch.py',
+            'mode:=%s' % mode,
+            'auto_start:=true'
+        ]
+
+    @staticmethod
     def video_url(topic):
         return '/stream?topic=%s&type=mjpeg' % str(topic or CAMERA_TOPIC)
 
@@ -724,6 +798,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 result = dashboard.camera_up()
             elif self.path == '/api/servo/camera_down':
                 result = dashboard.camera_down()
+            elif self.path == '/api/patrol/command':
+                result = dashboard.patrol_command(payload)
+            elif self.path == '/api/patrol/relock':
+                dashboard.publish_patrol_command('relock')
+                result = {'ok': True, 'message': '已发送重新锁定'}
             else:
                 result = {'ok': False, 'error': 'not found'}
                 self.send_json(result, 404)

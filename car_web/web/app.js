@@ -19,6 +19,7 @@ const api = {
   cameraRight: '/api/servo/camera_right',
   cameraUp: '/api/servo/camera_up',
   cameraDown: '/api/servo/camera_down',
+  patrolRelock: '/api/patrol/relock',
   generateReport: '/api/report/generate',
 };
 
@@ -71,6 +72,8 @@ const els = {
   cameraDownBtn: document.getElementById('cameraDownBtn'),
   chassisResetBtn: document.getElementById('chassisResetBtn'),
   servoResetBtn: document.getElementById('servoResetBtn'),
+  patrolRelockBtn: document.getElementById('patrolRelockBtn'),
+  patrolState: document.getElementById('patrolState'),
   notifyStartBtn: document.getElementById('notifyStartBtn'),
   notifyStopBtn: document.getElementById('notifyStopBtn'),
   reportTextBtn: document.getElementById('reportTextBtn'),
@@ -150,7 +153,26 @@ function updateButtons(processes) {
   els.cameraUpBtn.disabled = !coreRunning;
   els.cameraDownBtn.disabled = !coreRunning;
   els.servoResetBtn.disabled = !coreRunning;
+  if (els.patrolRelockBtn) {
+    els.patrolRelockBtn.disabled = !(processes.follow && processes.follow.running);
+  }
   updateFeatureDetailButtons();
+}
+
+function renderPatrolState(raw) {
+  if (!els.patrolState) return;
+  if (!raw) {
+    els.patrolState.textContent = '巡逻:未运行';
+    return;
+  }
+  try {
+    const s = JSON.parse(raw);
+    const lock = s.locked ? (s.target_present ? '已锁定' : '目标丢失') : '搜索中';
+    const front = (s.front_min === null || s.front_min === undefined) ? '-' : (s.front_min + 'm');
+    els.patrolState.textContent = `巡逻:${s.mode || '-'} / ${s.running ? '运行' : '停止'} / ${lock} / 前方${front}`;
+  } catch (e) {
+    els.patrolState.textContent = '巡逻:' + raw;
+  }
 }
 
 async function refreshStatus() {
@@ -168,6 +190,7 @@ async function refreshStatus() {
     const modeText = data.mode === 'report' ? '识别记录模式' : data.mode === 'manual' ? '普通操作模式' : '空闲';
     setStatus(`${modeText}，事件 ${data.events_count || 0} 条${data.last_error ? '，错误：' + data.last_error : ''}`, Boolean(data.last_error));
     renderReportJob(data.report_job);
+    renderPatrolState(data.patrol_state);
   } catch (error) {
     setStatus(`后端连接失败：${error.message}`, true);
   }
@@ -426,6 +449,9 @@ function bindControls() {
   els.cameraUpBtn.addEventListener('click', () => postAction(api.cameraUp, '摄像头上看'));
   els.cameraDownBtn.addEventListener('click', () => postAction(api.cameraDown, '摄像头下看'));
   els.servoResetBtn.addEventListener('click', () => postAction(api.servoReset, '云台回中'));
+  if (els.patrolRelockBtn) {
+    els.patrolRelockBtn.addEventListener('click', () => postAction(api.patrolRelock, '重新锁定'));
+  }
   document.getElementById('stopBtn').addEventListener('click', stopDrive);
 
   document.querySelectorAll('.drive[data-linear]').forEach((button) => {

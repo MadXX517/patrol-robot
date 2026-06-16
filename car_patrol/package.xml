@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>car_patrol</name>
+  <version>0.0.0</version>
+  <description>军警巡逻辅助:人体跟随(锁定保持距离)、云台追踪,后续手势/巡航。复用 car_yolo/car_vision/深度。</description>
+  <maintainer email="cockmagiccn@gmail.com">MadXX517</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>interfaces</exec_depend>
+  <exec_depend>car_vision</exec_depend>
+  <exec_depend>car_yolo</exec_depend>
+  <exec_depend>car_msg</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
