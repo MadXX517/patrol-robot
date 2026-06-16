@@ -102,8 +102,7 @@ class PersonFollow(Node):
         self.gimbal_yaw = YAW_HOME
         self.gimbal_pitch = PITCH_HOME
 
-        # NanoTrack
-        self._build_tracker()
+        # 跟踪以 YOLO person 框为准,IoU + 颜色直方图做帧间关联(不用易漂移的 NanoTrack)
 
         # PID
         self.pid_ang = pid.PID(0.0035, 0.0, 0.0005)     # 角度对中(基于像素)
@@ -139,17 +138,6 @@ class PersonFollow(Node):
         self.get_logger().info('\033[1;32mperson_follow 启动: mode=%s\033[0m' % self.mode)
 
     # ===================== 工具 =====================
-    def _build_tracker(self):
-        params = cv2.TrackerNano_Params()
-        wdir = os.path.join(str(Path(__file__).parent), 'weights')
-        params.backbone = os.path.join(wdir, 'nanotrack_backbone_sim.onnx')
-        params.neckhead = os.path.join(wdir, 'nanotrack_head_sim.onnx')
-        self.tracker = cv2.TrackerNano_create(params)
-        self._params = params
-
-    def _reset_tracker(self):
-        self.tracker = cv2.TrackerNano_create(self._params)
-
     def _now(self):
         return self.get_clock().now().nanoseconds / 1e9
 
@@ -272,6 +260,22 @@ class PersonFollow(Node):
         return resp
 
     # ===================== 选目标/锁定 =====================
+    def _sane_persons(self, persons, img_w, img_h):
+        # 过滤明显不合理的框:整幅宽、几乎整幅、低分。避免 YOLO 偶发超大/合并框。
+        out = []
+        for (x1, y1, x2, y2, score) in persons:
+            w = x2 - x1; h = y2 - y1
+            if w <= 4 or h <= 4:
+                continue
+            if score < 0.45:
+                continue
+            if w > 0.55 * img_w:            # 站立的人不会超过半幅宽,过宽多为误检/合并框
+                continue
+            if h < w:                       # 人形应竖高(高>=宽),横向框丢弃
+                continue
+            out.append((x1, y1, x2, y2, score))
+        return out
+
     def _pick_target(self, img_w, img_h, persons):
         if not persons:
             return None
@@ -346,62 +350,57 @@ class PersonFollow(Node):
             self._draw_and_publish(bgr, None, None, 'idle')
             return
 
-        fresh_persons = persons if persons_fresh else []
+        fresh_persons = self._sane_persons(persons, img_w, img_h) if persons_fresh else []
 
-        # --- 锁定/重锁 ---
+        # --- 锁定/重锁:从合理的 person 框中选目标 ---
         if relock or not self.locked:
             tgt = self._pick_target(img_w, img_h, fresh_persons)
             if tgt is not None:
                 tgt = self._sanitize_box(tgt, img_w, img_h)
-                self._reset_tracker()
-                try:
-                    self.tracker.init(bgr, tuple(int(v) for v in tgt))
-                except Exception as e:
-                    self.get_logger().warn('tracker init fail: %s' % e)
-                    self._draw_and_publish(bgr, None, None, 'no_target')
-                    return
                 self.target_hist = self._hist(bgr, tgt)
                 self.last_box = tgt
                 self.locked = True
                 self.target_present = True
                 self.last_seen = self._now()
+                self.frame_count = 0
                 self.get_logger().info('locked target box=%s' % str(tgt))
             else:
                 self._publish_zero_vel()
                 self._draw_and_publish(bgr, None, None, 'searching')
                 return
 
-        # --- 跟踪 ---
-        ok, box = self.tracker.update(bgr)
-        if ok and min(box) > 0:
-            box = self._sanitize_box(box, img_w, img_h)
-            self.last_box = box
+        # --- 跟踪:IoU(位置连续) + 颜色直方图(外观)综合打分关联,多目标时锁住同一人 ---
+        matched = None
+        if fresh_persons:
+            def assoc_score(p):
+                iou = self._iou(self.last_box, p)
+                hs = 0.0
+                if self.target_hist is not None:
+                    hb = self._hist(bgr, (p[0], p[1], p[2] - p[0], p[3] - p[1]))
+                    if hb is not None:
+                        hs = max(0.0, cv2.compareHist(self.target_hist, hb, cv2.HISTCMP_CORREL))
+                return 0.5 * iou + 0.5 * hs
+            best = max(fresh_persons, key=assoc_score)
+            if assoc_score(best) > 0.3:
+                matched = (best[0], best[1], best[2] - best[0], best[3] - best[1])
+        if matched is not None:
+            nb = self._sanitize_box(matched, img_w, img_h)
+            # EMA 平滑,减少框抖动(仅在连续跟踪时)
+            if self.last_box is not None and self.target_present:
+                a = 0.5
+                ob = self.last_box
+                nb = (int(a * nb[0] + (1 - a) * ob[0]), int(a * nb[1] + (1 - a) * ob[1]),
+                      int(a * nb[2] + (1 - a) * ob[2]), int(a * nb[3] + (1 - a) * ob[3]))
+            self.last_box = nb
             self.target_present = True
             self.last_seen = self._now()
             self.frame_count += 1
-            # 周期性用 YOLO 校正漂移 + 更新外观
-            if self.frame_count % 10 == 0 and fresh_persons:
-                best = max(fresh_persons, key=lambda p: self._iou(box, p))
-                if self._iou(box, best) > 0.4:
-                    nb = self._sanitize_box((best[0], best[1], best[2] - best[0], best[3] - best[1]), img_w, img_h)
-                    h = self._hist(bgr, nb)
-                    if h is not None:
-                        self.target_hist = h
+            if self.frame_count % 5 == 0:
+                h = self._hist(bgr, nb)
+                if h is not None:
+                    self.target_hist = h
         else:
-            # 跟丢 -> 颜色直方图重捕
             self.target_present = False
-            rb = self._reacquire(bgr, fresh_persons)
-            if rb is not None:
-                rb = self._sanitize_box(rb, img_w, img_h)
-                self._reset_tracker()
-                try:
-                    self.tracker.init(bgr, tuple(int(v) for v in rb))
-                    self.last_box = rb
-                    self.target_present = True
-                    self.last_seen = self._now()
-                    self.get_logger().info('re-acquired target')
-                except Exception:
-                    pass
 
         # --- 控制 ---
         if not self.target_present:
@@ -463,15 +462,16 @@ class PersonFollow(Node):
 
     # ===================== 云台 =====================
     def _gimbal_track(self, cx, cy, img_w, img_h, yaw_active):
-        if yaw_active:
-            self.pid_gyaw.SetPoint = img_w / 2.0
-            self.pid_gyaw.update(cx)
-            self.gimbal_yaw = _clamp(self.gimbal_yaw + self.pid_gyaw.output, *YAW_LIMIT)
-        self.pid_gpitch.SetPoint = img_h / 2.0
-        self.pid_gpitch.update(cy)
-        # 图像里人偏下(cy大)需要云台下俯:pitch 增大; 这里按需调号
-        self.gimbal_pitch = _clamp(self.gimbal_pitch - self.pid_gpitch.output, *PITCH_LIMIT)
-        # 限频:每 3 帧发一次
+        # 归一化误差 + 死区 + 小增益 + 每帧步进上限,防止大角度跳动
+        ex = (cx - img_w / 2.0) / (img_w / 2.0)
+        ey = (cy - img_h / 2.0) / (img_h / 2.0)
+        DZ = 0.10          # 死区:目标在画面中心附近不动
+        GAIN = 0.10        # 比例增益(小)
+        STEP = 0.03        # 每帧最大步进(rad ≈ 1.7°)
+        if yaw_active and abs(ex) > DZ:
+            self.gimbal_yaw = _clamp(self.gimbal_yaw - _clamp(GAIN * ex, -STEP, STEP), *YAW_LIMIT)
+        if abs(ey) > DZ:
+            self.gimbal_pitch = _clamp(self.gimbal_pitch + _clamp(GAIN * ey, -STEP, STEP), *PITCH_LIMIT)
         if self.frame_count % 3 == 0:
             self._gimbal_publish()
 
