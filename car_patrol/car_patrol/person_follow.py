@@ -63,7 +63,7 @@ class PersonFollow(Node):
         self.declare_parameter('auto_start', False)              # 启动即开始(便于单测)
         self.declare_parameter('select_policy', 'center')        # center | largest
         self.declare_parameter('color_topic', '/camera/color/image_raw')
-        self.declare_parameter('depth_topic', '/camera/depth/image_rect_raw')
+        self.declare_parameter('depth_topic', '/camera/depth/image_raw')
         self.declare_parameter('yolo_topic', '/car_yolo/object_detect')
         self.declare_parameter('use_lidar_safety', True)
 
@@ -101,6 +101,7 @@ class PersonFollow(Node):
 
         self.gimbal_yaw = YAW_HOME
         self.gimbal_pitch = PITCH_HOME
+        self.last_gimbal_t = 0.0
 
         # 跟踪以 YOLO person 框为准,IoU + 颜色直方图做帧间关联(不用易漂移的 NanoTrack)
 
@@ -133,7 +134,7 @@ class PersonFollow(Node):
         self.create_service(Trigger, '~/relock', self._relock_srv)
 
         self._gimbal_home()
-        self.create_timer(1.0 / 15.0, self._loop)   # 15Hz 主循环
+        self.create_timer(1.0 / 20.0, self._loop)   # 20Hz 主循环(视频更顺;检测仍受 YOLO ~14Hz 限制)
         self.create_timer(0.5, self._publish_state)
         self.get_logger().info('\033[1;32mperson_follow 启动: mode=%s\033[0m' % self.mode)
 
@@ -265,14 +266,11 @@ class PersonFollow(Node):
         out = []
         for (x1, y1, x2, y2, score) in persons:
             w = x2 - x1; h = y2 - y1
-            if w <= 4 or h <= 4:
+            if w <= 6 or h <= 6:
                 continue
-            if score < 0.45:
+            if score < 0.4:
                 continue
-            if w > 0.55 * img_w:            # 站立的人不会超过半幅宽,过宽多为误检/合并框
-                continue
-            if h < w:                       # 人形应竖高(高>=宽),横向框丢弃
-                continue
+            # 不再按框大小剔除:接受任意大小/比例的 person(含近全屏、手臂前伸、被边缘截断)
             out.append((x1, y1, x2, y2, score))
         return out
 
@@ -369,25 +367,25 @@ class PersonFollow(Node):
                 self._draw_and_publish(bgr, None, None, 'searching')
                 return
 
-        # --- 跟踪:IoU(位置连续) + 颜色直方图(外观)综合打分关联,多目标时锁住同一人 ---
+        # --- 跟踪:按"中心距离"关联(对快速移动+低帧率宽容,且省 CPU) ---
         matched = None
         if fresh_persons:
-            def assoc_score(p):
-                iou = self._iou(self.last_box, p)
-                hs = 0.0
-                if self.target_hist is not None:
-                    hb = self._hist(bgr, (p[0], p[1], p[2] - p[0], p[3] - p[1]))
-                    if hb is not None:
-                        hs = max(0.0, cv2.compareHist(self.target_hist, hb, cv2.HISTCMP_CORREL))
-                return 0.5 * iou + 0.5 * hs
-            best = max(fresh_persons, key=assoc_score)
-            if assoc_score(best) > 0.3:
+            lb = self.last_box
+            lcx = lb[0] + lb[2] / 2.0
+            lcy = lb[1] + lb[3] / 2.0
+
+            def center_dist(p):
+                pcx = (p[0] + p[2]) / 2.0
+                pcy = (p[1] + p[3]) / 2.0
+                return ((pcx - lcx) ** 2 + (pcy - lcy) ** 2) ** 0.5
+            best = min(fresh_persons, key=center_dist)
+            if center_dist(best) < 0.35 * img_w:   # 中心位移门限
                 matched = (best[0], best[1], best[2] - best[0], best[3] - best[1])
         if matched is not None:
             nb = self._sanitize_box(matched, img_w, img_h)
-            # EMA 平滑,减少框抖动(仅在连续跟踪时)
+            # EMA 平滑(仅连续跟踪时)
             if self.last_box is not None and self.target_present:
-                a = 0.5
+                a = 0.6
                 ob = self.last_box
                 nb = (int(a * nb[0] + (1 - a) * ob[0]), int(a * nb[1] + (1 - a) * ob[1]),
                       int(a * nb[2] + (1 - a) * ob[2]), int(a * nb[3] + (1 - a) * ob[3]))
@@ -395,10 +393,6 @@ class PersonFollow(Node):
             self.target_present = True
             self.last_seen = self._now()
             self.frame_count += 1
-            if self.frame_count % 5 == 0:
-                h = self._hist(bgr, nb)
-                if h is not None:
-                    self.target_hist = h
         else:
             self.target_present = False
 
@@ -461,21 +455,31 @@ class PersonFollow(Node):
         return (x, y, w, h)
 
     # ===================== 云台 =====================
+    # 云台控制参数(本云台仅 yaw 左右,无俯仰)
+    GIMBAL_PERIOD = 0.28   # 发令周期(秒):转到位再发下一条,防过冲
+    GIMBAL_DZ = 0.13       # 死区(归一化):目标进入画面中央±13%即停,防小幅震荡
+    GIMBAL_GAIN = 0.28     # 比例增益(略降,减小过冲)
+    GIMBAL_STEP = 0.07     # 每条指令最大步进(rad ≈ 4°)
+    GIMBAL_DUR_MS = 260    # 舵机运动时长,与周期匹配
+
     def _gimbal_track(self, cx, cy, img_w, img_h, yaw_active):
-        # 本云台仅 yaw(左右),无俯仰(joint3 无效),故只控水平居中。
         if not yaw_active:
             return
+        now = self._now()
+        if now - self.last_gimbal_t < self.GIMBAL_PERIOD:   # 限频:转到位再发下一条
+            return
         ex = (cx - img_w / 2.0) / (img_w / 2.0)   # 归一化水平误差 [-1,1]
-        DZ = 0.06          # 死区:接近中心不动,防抖
-        GAIN = 0.25        # 比例增益
-        STEP = 0.06        # 每帧步进上限(rad ≈ 3.4°),平滑且可见
-        if abs(ex) > DZ:
-            self.gimbal_yaw = _clamp(self.gimbal_yaw - _clamp(GAIN * ex, -STEP, STEP), *YAW_LIMIT)
-            self._gimbal_publish()
+        if abs(ex) <= self.GIMBAL_DZ:
+            return
+        step = _clamp(self.GIMBAL_GAIN * ex, -self.GIMBAL_STEP, self.GIMBAL_STEP)
+        # 目标在右(ex>0)→ yaw 增大右转(实测方向)
+        self.gimbal_yaw = _clamp(self.gimbal_yaw + step, *YAW_LIMIT)
+        self.last_gimbal_t = now
+        self._gimbal_publish()
 
     def _gimbal_publish(self):
         self.arm.set_steer([self.gimbal_yaw, GIMBAL_FIXED[0], GIMBAL_FIXED[1],
-                            self.gimbal_pitch, GIMBAL_FIXED[2], GIMBAL_FIXED[3]], 200)
+                            self.gimbal_pitch, GIMBAL_FIXED[2], GIMBAL_FIXED[3]], self.GIMBAL_DUR_MS)
 
     def _gimbal_home(self):
         self.gimbal_yaw = YAW_HOME
@@ -498,7 +502,9 @@ class PersonFollow(Node):
             if dist is not None:
                 txt += ' d=%.2fm' % dist
             cv2.putText(bgr, txt, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            self.pub_result.publish(self.bridge.cv2_to_imgmsg(bgr, 'bgr8'))
+            # 降到 640x360 再发布:省 CPU、视频传输更流畅(检测仍用原分辨率)
+            out = cv2.resize(bgr, (640, 360))
+            self.pub_result.publish(self.bridge.cv2_to_imgmsg(out, 'bgr8'))
         except Exception as e:
             self.get_logger().warn('publish result fail: %s' % e)
 
