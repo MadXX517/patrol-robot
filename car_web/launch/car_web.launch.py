@@ -22,7 +22,7 @@ def generate_launch_description():
         description='Seconds before auto stop if no drive command is received'
     )
     # 电量:/PowerVoltage 原始字节 x scale = 伏特;full/empty 用于估算百分比(按电池组校准)
-    voltage_scale_arg = DeclareLaunchArgument('voltage_scale', default_value='0.1')
+    voltage_scale_arg = DeclareLaunchArgument('voltage_scale', default_value='0.178')
     voltage_full_arg = DeclareLaunchArgument('voltage_full', default_value='12.6')
     voltage_empty_arg = DeclareLaunchArgument('voltage_empty', default_value='9.9')
 

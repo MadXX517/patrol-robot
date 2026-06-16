@@ -129,9 +129,10 @@ class DashboardNode(Node):
         self.declare_parameter('drive_timeout', 0.5)
         self.declare_parameter('max_linear_speed', 0.2)
         self.declare_parameter('max_angular_speed', 1.0)
-        # 电量:/PowerVoltage 发布的是串口原始字节(惯例为电压x10),scale 用于换算成伏特。
-        # full/empty 为该电池组满/空电压(伏特),用于估算百分比。上板实测后校准。
-        self.declare_parameter('voltage_scale', 0.1)
+        # 电量:/PowerVoltage 为串口单字节 ADC 值,线性过原点标定。
+        # 实测:万用表 11.06V 对应原始值≈62 -> scale≈0.178(原始字节本身有 ±2 噪声)。
+        # full/empty 为 3 串锂电满/空电压(伏特),用于估算百分比。
+        self.declare_parameter('voltage_scale', 0.178)
         self.declare_parameter('voltage_full', 12.6)
         self.declare_parameter('voltage_empty', 9.9)
 
@@ -368,7 +369,7 @@ class DashboardNode(Node):
             empty = self.voltage_empty
         if raw is None:
             return {'available': False}
-        fresh = (time.monotonic() - stamp) < 5.0
+        fresh = (time.monotonic() - stamp) < 15.0
         voltage = raw * scale
         if full > empty:
             percent = (voltage - empty) / (full - empty) * 100.0
