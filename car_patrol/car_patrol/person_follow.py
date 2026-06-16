@@ -462,17 +462,15 @@ class PersonFollow(Node):
 
     # ===================== 云台 =====================
     def _gimbal_track(self, cx, cy, img_w, img_h, yaw_active):
-        # 归一化误差 + 死区 + 小增益 + 每帧步进上限,防止大角度跳动
-        ex = (cx - img_w / 2.0) / (img_w / 2.0)
-        ey = (cy - img_h / 2.0) / (img_h / 2.0)
-        DZ = 0.10          # 死区:目标在画面中心附近不动
-        GAIN = 0.10        # 比例增益(小)
-        STEP = 0.03        # 每帧最大步进(rad ≈ 1.7°)
-        if yaw_active and abs(ex) > DZ:
+        # 本云台仅 yaw(左右),无俯仰(joint3 无效),故只控水平居中。
+        if not yaw_active:
+            return
+        ex = (cx - img_w / 2.0) / (img_w / 2.0)   # 归一化水平误差 [-1,1]
+        DZ = 0.06          # 死区:接近中心不动,防抖
+        GAIN = 0.25        # 比例增益
+        STEP = 0.06        # 每帧步进上限(rad ≈ 3.4°),平滑且可见
+        if abs(ex) > DZ:
             self.gimbal_yaw = _clamp(self.gimbal_yaw - _clamp(GAIN * ex, -STEP, STEP), *YAW_LIMIT)
-        if abs(ey) > DZ:
-            self.gimbal_pitch = _clamp(self.gimbal_pitch + _clamp(GAIN * ey, -STEP, STEP), *PITCH_LIMIT)
-        if self.frame_count % 3 == 0:
             self._gimbal_publish()
 
     def _gimbal_publish(self):
