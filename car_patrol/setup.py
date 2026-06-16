@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'person_follow = car_patrol.person_follow:main',
+            'gesture_command = car_patrol.gesture_command:main',
         ],
     },
 )

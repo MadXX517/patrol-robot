@@ -28,7 +28,20 @@ WEB_VIDEO_PORT = 8080
 IK_TOPIC = '/ik_states'
 JOINT_STATES_TOPIC = '/joint_states'
 PERSON_FOLLOW_RESULT_TOPIC = '/person_follow/result_img'
+GESTURE_RESULT_TOPIC = '/gesture_command/result_img'
+GESTURE_STATE_TOPIC = '/gesture_command/gesture'
 PATROL_CMD_TOPIC = '/patrol/command'
+
+# 兜底清理用的进程特征(按 launch/可执行名匹配进程组)。dashboard 自身命令行是
+# `ros2 run car_web dashboard_server`,不含下列任一特征,绝不会误杀自己。
+# web_video_server 不在此列(保留视频流不中断)。
+RESIDUAL_PATTERNS = [
+    'astra_camera_node', 'car_camera.launch', 'base_serial.launch',
+    'car_web_core.launch', 'yolo_detect', 'car_report_yolo.launch',
+    'person_follow', 'human_follow.launch', 'gesture_command',
+    'dingtalk_notify', 'gimbal_track.launch',
+]
+LIDAR_PATTERNS = ['car_lidar.launch', 'rplidar', 'scan_angle_filter']
 PATROL_STATE_TOPIC = '/person_follow/state'
 POWER_VOLTAGE_TOPIC = '/PowerVoltage'
 JOINT_NAMES = ['joint0', 'joint1', 'joint2', 'joint3', 'joint4', 'joint5']
@@ -79,12 +92,6 @@ FEATURES = [
         'name': '云台追踪',
         'description': '底盘不动,仅云台锁定追踪目标人(car_patrol)。',
         'available': True,
-    },
-    {
-        'id': 'pose_detect',
-        'name': '姿态检测',
-        'description': '预留接口，后续接姿态/手势识别。',
-        'available': False,
     },
     {
         'id': 'color_track',
@@ -164,6 +171,9 @@ class DashboardNode(Node):
         self.have_joint_state = False
 
         self.patrol_state = ''
+        self.gesture_state = ''
+        self.gesture_on = False           # 手势控制为独立叠加开关,不占 active_feature
+        self.lidar_on = False             # 雷达独立开关(供 follow 避障)
 
         self.cmd_pub = self.create_publisher(Twist, CMD_VEL_TOPIC, 5)
         self.servo_pub = self.create_publisher(JointState, IK_TOPIC, 5)
@@ -172,6 +182,7 @@ class DashboardNode(Node):
         self.create_subscription(JointState, JOINT_STATES_TOPIC, self.joint_state_callback, 10)
         self.create_subscription(String, PATROL_STATE_TOPIC, self.patrol_state_callback, 5)
         self.create_subscription(Float32, POWER_VOLTAGE_TOPIC, self.battery_callback, 10)
+        self.create_subscription(String, GESTURE_STATE_TOPIC, self.gesture_state_callback, 5)
         self.create_timer(0.1, self.drive_timer_callback)
 
         self.http_server = ThreadingHTTPServer(
@@ -248,7 +259,7 @@ class DashboardNode(Node):
         with self.lock:
             processes = {
                 name: self._process_state(name)
-                for name in ('core', 'report', 'notify', 'follow')
+                for name in ('core', 'report', 'notify', 'follow', 'gesture', 'lidar')
             }
             report_job = dict(self.report_job) if self.report_job else None
             core_running = self._is_running('core')
@@ -275,6 +286,9 @@ class DashboardNode(Node):
                 'can_drive': core_running,
                 'can_report': report_running,
                 'patrol_state': self.patrol_state,
+                'gesture_state': self.gesture_state,
+                'gesture_on': self.gesture_on,
+                'lidar_on': self.lidar_on,
                 'battery': self.battery_info(),
             }
 
@@ -321,6 +335,9 @@ class DashboardNode(Node):
         if active_feature and active_feature not in ('human_follow', 'gimbal_track'):
             self.stop_feature()
         self.start_core()
+        # 人体跟随底盘会动,需雷达避障;云台追踪底盘不动,无需雷达
+        if feature_id == 'human_follow' and not self._is_running('lidar'):
+            self.start_lidar()
         self.start_process('follow', self.follow_command(mode))
         with self.lock:
             self.current_mode = feature_id
@@ -339,6 +356,30 @@ class DashboardNode(Node):
             self.patrol_state = ''
         return self.status()
 
+    def start_gesture(self):
+        """手势控制 = 纯输入设备,独立叠加开关,不占 active_feature。
+        只起 core(手势节点需要相机)+ gesture 节点,不带任何跟随。
+        手势命令发到 /patrol/command;若想让命令生效,另外开"人体跟随/云台追踪"
+        起 person_follow 作执行方即可。手势与追踪彻底解耦。"""
+        self.start_core()
+        self.start_process('gesture', self.gesture_command())
+        with self.lock:
+            self.gesture_on = True
+            self.current_video_topic = GESTURE_RESULT_TOPIC
+        return self.status()
+
+    def stop_gesture(self):
+        """只停手势节点,不动 follow(跟随是独立功能,可能仍需运行)。"""
+        self.stop_process('gesture')
+        with self.lock:
+            self.gesture_on = False
+            # 视频切回:若跟随在跑则看跟随画面,否则看相机
+            if self._is_running('follow'):
+                self.current_video_topic = PERSON_FOLLOW_RESULT_TOPIC
+            else:
+                self.current_video_topic = CAMERA_TOPIC
+        return self.status()
+
     def patrol_command(self, payload):
         cmd = str(payload.get('cmd', '')).strip()
         if not cmd:
@@ -351,9 +392,45 @@ class DashboardNode(Node):
         msg.data = str(cmd)
         self.patrol_cmd_pub.publish(msg)
 
+    def start_lidar(self):
+        """冷启动雷达(rplidar + scan_angle_filter)。供人体跟随避障用。"""
+        self.start_process('lidar', self.lidar_command())
+        with self.lock:
+            self.lidar_on = True
+        return self.status()
+
+    def stop_lidar(self):
+        self.stop_process('lidar')
+        # 兜底清掉可能脱离句柄的雷达残留
+        self.force_cleanup_residuals_lidar_only()
+        with self.lock:
+            self.lidar_on = False
+        return self.status()
+
+    def force_cleanup_residuals_lidar_only(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for pat in LIDAR_PATTERNS:
+                cpat = '[' + pat[0] + ']' + pat[1:]
+                try:
+                    out = subprocess.run(['pgrep', '-f', cpat],
+                                         capture_output=True, text=True, timeout=3)
+                except Exception:
+                    continue
+                for pid_s in out.stdout.split():
+                    try:
+                        os.killpg(os.getpgid(int(pid_s)), sig)
+                    except (ProcessLookupError, ValueError, PermissionError):
+                        pass
+            if sig == signal.SIGTERM:
+                time.sleep(1.5)
+
     def patrol_state_callback(self, msg):
         with self.lock:
             self.patrol_state = msg.data
+
+    def gesture_state_callback(self, msg):
+        with self.lock:
+            self.gesture_state = msg.data
 
     def battery_callback(self, msg):
         with self.lock:
@@ -442,16 +519,25 @@ class DashboardNode(Node):
     def stop_core(self):
         self.stop_process('notify')
         self.stop_process('report')
+        self.stop_process('gesture')
+        self.stop_process('follow')
         self.publish_stop(repeat=5)
         self.stop_process('core')
         with self.lock:
             self.current_mode = 'idle'
             self.current_video_topic = CAMERA_TOPIC
             self.active_feature = ''
+            self.gesture_on = False
         return self.status()
 
     def stop_all(self):
-        return self.stop_core()
+        result = self.stop_core()
+        # 兜底:清掉任何句柄外的残留(孤儿/上次实例起的),含雷达
+        self.stop_process('lidar')
+        self.force_cleanup_residuals(include_lidar=True)
+        with self.lock:
+            self.lidar_on = False
+        return result
 
     def start_notify(self):
         with self.lock:
@@ -668,6 +754,16 @@ class DashboardNode(Node):
         ]
 
     @staticmethod
+    def gesture_command():
+        return [
+            'ros2', 'launch', 'car_patrol', 'gesture_command.launch.py',
+        ]
+
+    @staticmethod
+    def lidar_command():
+        return ['ros2', 'launch', 'car_base', 'car_lidar.launch.py']
+
+    @staticmethod
     def video_url(topic):
         return '/stream?topic=%s&type=mjpeg' % str(topic or CAMERA_TOPIC)
 
@@ -766,6 +862,36 @@ class DashboardNode(Node):
         self.http_server.shutdown()
         self.http_server.server_close()
 
+    def force_cleanup_residuals(self, include_lidar=False):
+        """按进程特征兜底清理残留(孤儿/非本实例起的功能节点)。
+        先 SIGTERM 再 SIGKILL 整个进程组。用字符类化的 pattern 避免误杀。"""
+        patterns = list(RESIDUAL_PATTERNS)
+        if include_lidar:
+            patterns += LIDAR_PATTERNS
+        killed = []
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for pat in patterns:
+                # [x]xx 字符类:防止 pgrep 匹配到自己的命令行
+                cpat = '[' + pat[0] + ']' + pat[1:]
+                try:
+                    out = subprocess.run(['pgrep', '-f', cpat],
+                                         capture_output=True, text=True, timeout=3)
+                except Exception:
+                    continue
+                for pid_s in out.stdout.split():
+                    try:
+                        pid = int(pid_s)
+                        os.killpg(os.getpgid(pid), sig)
+                        killed.append(pid)
+                    except (ProcessLookupError, ValueError, PermissionError):
+                        pass
+            if sig == signal.SIGTERM:
+                time.sleep(2.5)
+        if killed:
+            self.get_logger().info('force_cleanup killed pids: %s'
+                                    % sorted(set(killed)))
+        return len(set(killed))
+
     def _is_running(self, name):
         proc = self.processes.get(name)
         return proc is not None and proc.poll() is None
@@ -853,6 +979,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             elif self.path == '/api/patrol/relock':
                 dashboard.publish_patrol_command('relock')
                 result = {'ok': True, 'message': '已发送重新锁定'}
+            elif self.path == '/api/gesture/start':
+                result = dashboard.start_gesture()
+            elif self.path == '/api/gesture/stop':
+                result = dashboard.stop_gesture()
+            elif self.path == '/api/lidar/start':
+                result = dashboard.start_lidar()
+            elif self.path == '/api/lidar/stop':
+                result = dashboard.stop_lidar()
             else:
                 result = {'ok': False, 'error': 'not found'}
                 self.send_json(result, 404)
@@ -910,6 +1044,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 def main():
     rclpy.init()
     node = DashboardNode()
+    # 启动自清:清掉上次崩溃/重启遗留的功能节点(不含雷达,雷达由用户/跟随按需起)
+    try:
+        n = node.force_cleanup_residuals(include_lidar=False)
+        node.get_logger().info('startup cleanup removed %d residual process(es)' % n)
+    except Exception as exc:
+        node.get_logger().warn('startup cleanup failed: %s' % exc)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

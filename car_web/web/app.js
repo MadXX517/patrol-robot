@@ -20,6 +20,11 @@ const api = {
   cameraUp: '/api/servo/camera_up',
   cameraDown: '/api/servo/camera_down',
   patrolRelock: '/api/patrol/relock',
+  patrolCommand: '/api/patrol/command',
+  gestureStart: '/api/gesture/start',
+  gestureStop: '/api/gesture/stop',
+  lidarStart: '/api/lidar/start',
+  lidarStop: '/api/lidar/stop',
   generateReport: '/api/report/generate',
 };
 
@@ -74,7 +79,13 @@ const els = {
   chassisResetBtn: document.getElementById('chassisResetBtn'),
   servoResetBtn: document.getElementById('servoResetBtn'),
   patrolRelockBtn: document.getElementById('patrolRelockBtn'),
+  patrolFollowBtn: document.getElementById('patrolFollowBtn'),
+  patrolTrackBtn: document.getElementById('patrolTrackBtn'),
+  patrolStopBtn: document.getElementById('patrolStopBtn'),
+  gestureToggleBtn: document.getElementById('gestureToggleBtn'),
+  lidarToggleBtn: document.getElementById('lidarToggleBtn'),
   patrolState: document.getElementById('patrolState'),
+  gestureState: document.getElementById('gestureState'),
   notifyStartBtn: document.getElementById('notifyStartBtn'),
   notifyStopBtn: document.getElementById('notifyStopBtn'),
   reportTextBtn: document.getElementById('reportTextBtn'),
@@ -154,8 +165,20 @@ function updateButtons(processes) {
   els.cameraUpBtn.disabled = !coreRunning;
   els.cameraDownBtn.disabled = !coreRunning;
   els.servoResetBtn.disabled = !coreRunning;
-  if (els.patrolRelockBtn) {
-    els.patrolRelockBtn.disabled = !(processes.follow && processes.follow.running);
+  const followRunning = !!(processes.follow && processes.follow.running);
+  [els.patrolRelockBtn, els.patrolFollowBtn, els.patrolTrackBtn, els.patrolStopBtn]
+    .forEach((b) => { if (b) b.disabled = !followRunning; });
+  // 手势控制:独立叠加开关,任意时刻可开(会自动拉起 core/follow)
+  const gestureRunning = !!(processes.gesture && processes.gesture.running);
+  if (els.gestureToggleBtn) {
+    els.gestureToggleBtn.textContent = gestureRunning ? '停止手势控制' : '开启手势控制';
+    els.gestureToggleBtn.classList.toggle('primary', !gestureRunning);
+    els.gestureToggleBtn.classList.toggle('danger', gestureRunning);
+  }
+  const lidarRunning = !!(processes.lidar && processes.lidar.running);
+  if (els.lidarToggleBtn) {
+    els.lidarToggleBtn.textContent = lidarRunning ? '停止雷达' : '开启雷达';
+    els.lidarToggleBtn.classList.toggle('danger', lidarRunning);
   }
   updateFeatureDetailButtons();
 }
@@ -197,6 +220,33 @@ function renderPatrolState(raw) {
   }
 }
 
+function renderGestureState(raw) {
+  if (!els.gestureState) return;
+  if (!raw) {
+    els.gestureState.textContent = '手势:未运行';
+    return;
+  }
+  try {
+    const s = JSON.parse(raw);
+    if (s.state !== undefined) {
+      // v2 状态机:sleep/armed/confirm
+      const stMap = { armed: '已唤醒', confirm: '已触发', sleep: '休眠(挥手唤醒)' };
+      const st = stMap[s.state] || s.state;
+      const act = s.action ? ` 动作:${s.action}` : '';
+      const last = s.last_cmd ? ` 最近:${s.last_cmd}` : '';
+      els.gestureState.textContent = `手势:${st} / ${s.hands || 0}手[${s.statics || '-'}]${act}${last}`;
+    } else {
+      // v1 兼容
+      const g = s.gesture && s.gesture !== 'none' ? s.gesture : '-';
+      const fired = s.fired ? ` 触发→${s.fired}` : '';
+      const last = s.last_cmd ? ` 最近:${s.last_cmd}` : '';
+      els.gestureState.textContent = `手势:${g}${fired}${last}`;
+    }
+  } catch (e) {
+    els.gestureState.textContent = '手势:' + raw;
+  }
+}
+
 async function refreshStatus() {
   try {
     const data = await request(api.status);
@@ -213,6 +263,7 @@ async function refreshStatus() {
     setStatus(`${modeText}，事件 ${data.events_count || 0} 条${data.last_error ? '，错误：' + data.last_error : ''}`, Boolean(data.last_error));
     renderReportJob(data.report_job);
     renderPatrolState(data.patrol_state);
+    renderGestureState(data.gesture_state);
     renderBattery(data.battery);
   } catch (error) {
     setStatus(`后端连接失败：${error.message}`, true);
@@ -400,6 +451,16 @@ async function postAction(path, label) {
   }
 }
 
+async function postPatrolCmd(cmd, label) {
+  try {
+    await request(api.patrolCommand, { method: 'POST', body: { cmd } });
+    setStatus(`${label}已发送`);
+    await refreshStatus();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
 function startDrive(linear, angular) {
   stopDriveTimer();
   state.activeDrive = { linear, angular };
@@ -474,6 +535,27 @@ function bindControls() {
   els.servoResetBtn.addEventListener('click', () => postAction(api.servoReset, '云台回中'));
   if (els.patrolRelockBtn) {
     els.patrolRelockBtn.addEventListener('click', () => postAction(api.patrolRelock, '重新锁定'));
+  }
+  if (els.patrolFollowBtn) {
+    els.patrolFollowBtn.addEventListener('click', () => postPatrolCmd('follow', '智能跟随'));
+  }
+  if (els.patrolTrackBtn) {
+    els.patrolTrackBtn.addEventListener('click', () => postPatrolCmd('track_only', '云台追踪'));
+  }
+  if (els.patrolStopBtn) {
+    els.patrolStopBtn.addEventListener('click', () => postPatrolCmd('stop', '停止跟随'));
+  }
+  if (els.gestureToggleBtn) {
+    els.gestureToggleBtn.addEventListener('click', () => {
+      const running = els.gestureToggleBtn.textContent.includes('停止');
+      postAndRefresh(running ? api.gestureStop : api.gestureStart);
+    });
+  }
+  if (els.lidarToggleBtn) {
+    els.lidarToggleBtn.addEventListener('click', () => {
+      const running = els.lidarToggleBtn.textContent.includes('停止');
+      postAndRefresh(running ? api.lidarStop : api.lidarStart);
+    });
   }
   document.getElementById('stopBtn').addEventListener('click', stopDrive);
 

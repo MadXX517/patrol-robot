@@ -25,6 +25,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, qos_profile_sensor_data
+from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from cv_bridge import CvBridge
 from std_msgs.msg import String
 from std_srvs.srv import Trigger, SetBool
@@ -92,16 +93,26 @@ class PersonFollow(Node):
         self.target_hist = None
         self.frame_count = 0
 
-        self.latest_color = None        # bgr np
+        self.latest_color_msg = None    # 最新彩色原始消息(懒反序列化)
         self.latest_color_stamp = 0.0
         self.latest_depth = None        # uint16 mm np
         self.latest_persons = []        # [(x1,y1,x2,y2,score), ...]
         self.latest_persons_stamp = 0.0
         self.front_min = float('inf')   # 雷达正前方最近距离
 
-        self.gimbal_yaw = YAW_HOME
+        self.gimbal_yaw = YAW_HOME          # 当前实际下发的 yaw(20Hz 平滑插值后)
+        self.gimbal_yaw_target = YAW_HOME   # 控制决策算出的目标 yaw(8.5Hz 检测率更新)
         self.gimbal_pitch = PITCH_HOME
         self.last_gimbal_t = 0.0
+        self.prev_ex = 0.0           # 云台 yaw 上次归一化误差(算微分阻尼)
+        self.gimbal_ex_rate = 0.0    # 误差变化率(EMA 平滑)
+        self.gimbal_last_proc_stamp = 0.0   # 上次处理的检测时间戳(按检测门控)
+        self.base_prev_gy = 0.0      # 上次底盘控制用的 gimbal_yaw(算微分阻尼)
+        self.base_gy_rate = 0.0      # gimbal_yaw 变化率(EMA 平滑)
+        self.base_last_t = 0.0       # 上次底盘控制时间
+        self.search_dir = 0.0        # 丢目标时搜索旋转方向(基于人最后所在侧)
+        self.dist_filt = None        # 平滑后的距离(抑制深度间歇导致的前进顿挫)
+        self.dist_lost_t = 0.0       # 上次拿到有效深度的时间
 
         # 跟踪以 YOLO person 框为准,IoU + 颜色直方图做帧间关联(不用易漂移的 NanoTrack)
 
@@ -115,14 +126,20 @@ class PersonFollow(Node):
         self.arm = arm_ik_sdk.ArmControl(self)
 
         # ---------------- 通信 ----------------
+        # 回调组:让图像反序列化、雷达处理、主循环在多线程执行器下并行,互不阻塞
+        cb_color = MutuallyExclusiveCallbackGroup()
+        cb_depth = MutuallyExclusiveCallbackGroup()
+        cb_scan = MutuallyExclusiveCallbackGroup()
+        cb_loop = MutuallyExclusiveCallbackGroup()
+        cb_misc = ReentrantCallbackGroup()
         sensor_qos = qos_profile_sensor_data
-        self.create_subscription(Image, color_topic, self._color_cb, sensor_qos)
-        self.create_subscription(Image, depth_topic, self._depth_cb, sensor_qos)
-        self.create_subscription(ObjectsInfo, yolo_topic, self._yolo_cb, 1)
+        self.create_subscription(Image, color_topic, self._color_cb, sensor_qos, callback_group=cb_color)
+        self.create_subscription(Image, depth_topic, self._depth_cb, sensor_qos, callback_group=cb_depth)
+        self.create_subscription(ObjectsInfo, yolo_topic, self._yolo_cb, 1, callback_group=cb_misc)
         if self.use_lidar_safety:
             scan_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-            self.create_subscription(LaserScan, '/scan', self._scan_cb, scan_qos)
-        self.create_subscription(String, '/patrol/command', self._cmd_cb, 1)
+            self.create_subscription(LaserScan, '/scan', self._scan_cb, scan_qos, callback_group=cb_scan)
+        self.create_subscription(String, '/patrol/command', self._cmd_cb, 1, callback_group=cb_misc)
 
         self.pub_vel = self.create_publisher(Twist, '/cmd_vel', 1)
         self.pub_result = self.create_publisher(Image, '~/result_img', 1)
@@ -134,8 +151,8 @@ class PersonFollow(Node):
         self.create_service(Trigger, '~/relock', self._relock_srv)
 
         self._gimbal_home()
-        self.create_timer(1.0 / 20.0, self._loop)   # 20Hz 主循环(视频更顺;检测仍受 YOLO ~14Hz 限制)
-        self.create_timer(0.5, self._publish_state)
+        self.create_timer(1.0 / 20.0, self._loop, callback_group=cb_loop)   # 20Hz 主循环
+        self.create_timer(0.5, self._publish_state, callback_group=cb_misc)
         self.get_logger().info('\033[1;32mperson_follow 启动: mode=%s\033[0m' % self.mode)
 
     # ===================== 工具 =====================
@@ -160,13 +177,10 @@ class PersonFollow(Node):
 
     # ===================== 回调 =====================
     def _color_cb(self, msg):
-        try:
-            img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-        except Exception as e:
-            self.get_logger().warn('color cvt fail: %s' % e)
-            return
+        # 懒反序列化:仅存最新原始消息,真正转 cv2 放到 20Hz 主循环里按需做一次,
+        # 避免 30Hz 全速反序列化 2.7MB 大图(其中 1/3 帧主循环根本用不到)
         with self.lock:
-            self.latest_color = img
+            self.latest_color_msg = msg
             self.latest_color_stamp = self._now()
 
     def _depth_cb(self, msg):
@@ -188,24 +202,20 @@ class PersonFollow(Node):
             self.latest_persons_stamp = self._now()
 
     def _scan_cb(self, msg):
-        # 取正前方 ±20° 扇区最近距离
-        ranges = np.array(msg.ranges, dtype=np.float32)
-        n = len(ranges)
+        # 取车头正前方 ±20° 扇区最近距离(numpy 向量化)。
+        # 注意:本车雷达 0° 指向车尾(见 scan_angle_filter),车头前方对应
+        # 雷达角度 ±pi,故前方扇区是 |ang| >= pi-20°,而非 |ang| <= 20°。
+        ranges = np.asarray(msg.ranges, dtype=np.float32)
+        n = ranges.size
         if n == 0:
             return
-        ang_min = msg.angle_min
-        inc = msg.angle_increment
         half = math.radians(20)
-        fmin = float('inf')
-        for i in range(n):
-            a = ang_min + i * inc
-            # 归一到 [-pi,pi]
-            a = (a + math.pi) % (2 * math.pi) - math.pi
-            if abs(a) <= half:
-                r = ranges[i]
-                if math.isfinite(r) and r > 0.05 and r < fmin:
-                    fmin = r
-        self.front_min = fmin
+        idx = np.arange(n, dtype=np.float32)
+        ang = msg.angle_min + idx * msg.angle_increment
+        ang = (ang + math.pi) % (2 * math.pi) - math.pi      # 归一到 [-pi,pi]
+        valid = (np.abs(ang) >= (math.pi - half)) & np.isfinite(ranges) & (ranges > 0.05)
+        sector = ranges[valid]
+        self.front_min = float(sector.min()) if sector.size else float('inf')
 
     def _cmd_cb(self, msg):
         self._dispatch(msg.data.strip().lower())
@@ -334,13 +344,19 @@ class PersonFollow(Node):
     def _loop(self):
         with self.lock:
             running = self.running
-            bgr = None if self.latest_color is None else self.latest_color.copy()
+            color_msg = self.latest_color_msg
             persons = list(self.latest_persons)
             persons_fresh = (self._now() - self.latest_persons_stamp) < 1.0
             relock = self.relock_request
             self.relock_request = False
             mode = self.mode
-        if bgr is None:
+        if color_msg is None:
+            return
+        # 持锁外反序列化:每次主循环(20Hz)产生独立新数组,无需再 .copy()
+        try:
+            bgr = self.bridge.imgmsg_to_cv2(color_msg, 'bgr8')
+        except Exception as e:
+            self.get_logger().warn('color cvt fail: %s' % e)
             return
         img_h, img_w = bgr.shape[:2]
 
@@ -398,9 +414,18 @@ class PersonFollow(Node):
 
         # --- 控制 ---
         if not self.target_present:
-            if self._now() - self.last_seen > self.lost_timeout:
-                self._publish_zero_vel()
-            self._draw_and_publish(bgr, self.last_box, None, 'lost')
+            twist = Twist()
+            if fresh_persons:
+                # 画面里还有人 → 立刻重锁最居中者继续跟(应对快速走过/绕后重现);本帧先停,下帧接管
+                self.locked = False
+                self.relock_request = True
+            elif mode == 'follow' and (self._now() - self.last_seen) < self.lost_timeout \
+                    and self.search_dir != 0.0:
+                # 完全没人:原地朝人最后所在方向旋转找回(只转不前进=安全)
+                twist.angular.z = float(self.search_dir * self.SEARCH_ANG)
+            self.pub_vel.publish(twist)
+            status = 'searching' if (twist.angular.z != 0.0 or fresh_persons) else 'lost'
+            self._draw_and_publish(bgr, self.last_box, None, status)
             return
 
         box = self.last_box
@@ -411,35 +436,83 @@ class PersonFollow(Node):
 
         twist = Twist()
         if mode == 'follow':
-            # 角度对中
-            self.pid_ang.SetPoint = img_w / 2.0
-            self.pid_ang.update(cx)
-            ang = common.set_range(self.pid_ang.output, -self.max_ang, self.max_ang)
-            if abs(cx - img_w / 2.0) < img_w * 0.04:
+            # === B 架构 + 坦克炮塔稳定:相机世界朝向只由云台追踪决定,底盘转动被前馈抵消 ===
+            now_b = self._now()
+            dt_b = now_b - self.base_last_t
+            if not (0.0 < dt_b < 0.5):
+                dt_b = 0.05
+            self.base_last_t = now_b
+            ex = (cx - img_w / 2.0) / (img_w / 2.0)   # 人水平像素误差 = 相机世界指向误差
+
+            # 1) 云台跟踪步进:仅新检测时,响应人的世界指向误差
+            #    (底盘转动已被前馈补偿,故云台不会和底盘耦合)
+            track_step = 0.0
+            stamp = self.latest_persons_stamp
+            if stamp != self.gimbal_last_proc_stamp:
+                self.gimbal_last_proc_stamp = stamp
+                if abs(ex) > self.GIMBAL_DZ:
+                    track_step = _clamp(self.GIMBAL_KP * ex, -self.GIMBAL_STEP, self.GIMBAL_STEP)
+
+            # 2) 底盘 angular.z:PD 跟随,把 gimbal_yaw 缓慢卸载回正前方
+            gy = self.gimbal_yaw
+            raw_rate = (gy - self.base_prev_gy) / dt_b
+            self.base_gy_rate = 0.6 * self.base_gy_rate + 0.4 * raw_rate
+            self.base_prev_gy = gy
+            if abs(gy) <= self.BASE_YAW_DZ:
                 ang = 0.0
-            # 距离跟随
-            lin = 0.0
-            if dist is not None:
-                self.pid_lin.SetPoint = self.follow_distance
-                self.pid_lin.update(dist)
-                lin = common.set_range(-self.pid_lin.output, -self.max_lin, self.max_lin)
-                if abs(dist - self.follow_distance) < 0.12:
-                    lin = 0.0
             else:
-                # 无深度: 用框高占比作距离代理(越大越近)
-                ratio = bh / float(img_h)
-                err = 0.45 - ratio      # 目标占比 0.45
-                lin = common.set_range(err * 1.2, -self.max_lin, self.max_lin)
-            # 安全: 太近 / 雷达前方有障碍 -> 禁止前进
-            too_close = (dist is not None and dist < self.safe_distance)
+                ctrl = gy + self.BASE_YAW_KD * self.base_gy_rate
+                ang = common.set_range(-self.BASE_YAW_K * ctrl, -self.max_ang, self.max_ang)
+
+            # 3) 炮塔稳定前馈:底盘这一拍转 ang*dt,给云台叠加同量反向补偿,
+            #    净 gimbal_yaw += ang*dt(ang<0 右转时 yaw 减小)→ 底盘旋转不改变相机世界朝向。
+            #    硬钳位单次增量,结构性杜绝大跳。
+            delta = _clamp(track_step + ang * dt_b, -self.GIMBAL_MAX_DELTA, self.GIMBAL_MAX_DELTA)
+            new_yaw = _clamp(gy + delta, *YAW_LIMIT)
+            if abs(new_yaw - self.gimbal_yaw) > 1e-4:
+                self.gimbal_yaw = new_yaw
+                # 底盘在动(前馈流~20Hz)用短时长衔接;仅追踪(~8.5Hz)用长时长更平滑
+                self._gimbal_publish(60 if ang != 0.0 else self.GIMBAL_DUR_MS)
+
+            # 记录人最后所在侧(丢失时朝此方向搜索旋转);深度平滑抑制前进顿挫
+            self.search_dir = -1.0 if ex > 0 else 1.0
+            if dist is not None:
+                self.dist_filt = dist if self.dist_filt is None else 0.5 * self.dist_filt + 0.5 * dist
+                self.dist_lost_t = now_b
+            elif self.dist_filt is not None and (now_b - self.dist_lost_t) > 0.6:
+                self.dist_filt = None       # 深度久缺 → 放弃旧值,转用框高代理
+            d = self.dist_filt
+
+            # 4) 接近速度 v(>0 前进靠近):距离环 或 无深度时框高占比代理
+            v = 0.0
+            if d is not None:
+                self.pid_lin.SetPoint = self.follow_distance
+                self.pid_lin.update(d)
+                v = -self.pid_lin.output
+                if abs(d - self.follow_distance) < 0.12:
+                    v = 0.0
+            else:
+                ratio = bh / float(img_h)        # 越大越近
+                v = (0.45 - ratio) * 1.2
+            # 安全:太近 / 雷达前方障碍 → 不再靠近(允许后退)
+            too_close = (d is not None and d < self.safe_distance)
             lidar_block = (self.use_lidar_safety and self.front_min < self.safe_distance)
             if too_close or lidar_block:
-                lin = min(lin, 0.0)
-            twist.linear.x = float(lin)
+                v = min(v, 0.0)
+            v = common.set_range(v, -self.max_lin, self.max_lin)
+
+            # 5) 麦轮全向:把接近速度按人方位角(gimbal_yaw)分解成前后 x + 横移 y,
+            #    人在侧面时直接斜向/横移过去,不必先转身 → 更快、更直接、用上麦轮特性。
+            if self.machine_type == 'Mec':
+                vx = v * math.cos(gy)
+                vy = -v * math.sin(gy)   # 人在右(gy>0)→ 向右横移(REP103 右为 -y)
+            else:  # Ack:只能前后,云台偏太多时先转底盘对准再走
+                vx = 0.0 if abs(gy) > self.BASE_FWD_GATE else v
+                vy = 0.0
+            twist.linear.x = float(vx)
+            twist.linear.y = float(vy)
             twist.angular.z = float(ang)
             self.pub_vel.publish(twist)
-            # 云台仅 pitch 保持人垂直入框
-            self._gimbal_track(cx, cy, img_w, img_h, yaw_active=False)
         else:  # track_only
             self._publish_zero_vel()
             self._gimbal_track(cx, cy, img_w, img_h, yaw_active=True)
@@ -456,33 +529,62 @@ class PersonFollow(Node):
 
     # ===================== 云台 =====================
     # 云台控制参数(本云台仅 yaw 左右,无俯仰)
-    GIMBAL_PERIOD = 0.28   # 发令周期(秒):转到位再发下一条,防过冲
-    GIMBAL_DZ = 0.13       # 死区(归一化):目标进入画面中央±13%即停,防小幅震荡
-    GIMBAL_GAIN = 0.28     # 比例增益(略降,减小过冲)
-    GIMBAL_STEP = 0.07     # 每条指令最大步进(rad ≈ 4°)
-    GIMBAL_DUR_MS = 260    # 舵机运动时长,与周期匹配
+    # 下游:ik_states→STM32→串行总线舵机,position[6]=运动时长 DUR_MS,舵机在 DUR_MS 内
+    # 自己平滑插值到目标角。核心思路:让舵机硬件做插值,软件按检测率发令即可。
+    #   DUR_MS ≈ 检测间隔(~120ms)是关键:舵机在每段内连续移动、下条指令到时刚好到位
+    #   → 不早停(消卡顿)、不滞后累积(消过冲)。DUR<间隔→早停顿挫;DUR>间隔→滞后累积过冲。
+    # 不用软件 20Hz 插值:高频发令(2.4x 包量)+短 DUR 反复重启舵机轨迹 → 总线压力+偶发大跳。
+    GIMBAL_PERIOD = 0.05   # 发令最小间隔(秒)安全上限,实际由"新检测"门控(~8.5Hz)
+    GIMBAL_DZ = 0.05       # 死区(归一化):仅防正中心像素抖
+    GIMBAL_KP = 0.09       # 比例增益:g≈0.17 仍稳;比 0.06 更快更灵敏(平滑靠 DUR_MS 保证)
+    GIMBAL_STEP = 0.12     # 单次最大步进(rad)安全上限
+    GIMBAL_DUR_MS = 140    # 运动时长略大于检测间隔(~118ms):下条指令到时舵机仍在移动→平滑改向
+                           # 而非先停再起,消除段边界速度脉动(卡顿)。配小 KP 滞后累积可忽略,不致过冲。
 
-    def _gimbal_track(self, cx, cy, img_w, img_h, yaw_active):
+    # follow 模式 B 架构(云台主导、底盘跟随)参数:
+    # 底盘 angular.z 跟随云台朝向把 gimbal_yaw 拉回正前方(慢于云台→解耦不抢、不耦合震荡)。
+    # 符号:云台朝右 gimbal_yaw>0 → 底盘右转 angular.z<0,故 ang = -K*gimbal_yaw(已对 PID 符号核验)。
+    BASE_YAW_K = 0.72      # gimbal_yaw→angular.z 增益:大角度时底盘转更快跟上(提速)
+    BASE_YAW_KD = 0.0      # 底盘微分阻尼:炮塔稳定前馈已断开耦合环,纯比例卸载即一阶稳定,
+                           # 故先设 0。若底盘机械惯性致过头再加(gimbal_yaw 无视觉延迟,微分干净)。
+    GIMBAL_MAX_DELTA = 0.15  # 单次云台命令最大增量(rad):结构性杜绝"大跳",安全网
+    BASE_YAW_DZ = 0.15     # 云台在正前方 ±0.15rad(~9°)内底盘不转:近中心不追残余小角度→抑过冲
+    BASE_FWD_GATE = 0.5    # (保留)Ack 模式才用:云台偏太多时禁止前进。Mec 用横移不需要。
+    SEARCH_ANG = 0.9       # 丢目标时原地搜索旋转角速度(rad/s),朝人最后所在方向找回
+    # follow 模式云台略缩幅(底盘做转向主力),但保持足够响应(太小会滞后致底盘转过头)。
+    # track_only 不缩放(scale=1.0),保持已定型手感。
+    FOLLOW_GIMBAL_SCALE = 1.0
+
+    def _gimbal_track(self, cx, cy, img_w, img_h, yaw_active, gain_scale=1.0):
         if not yaw_active:
             return
-        now = self._now()
-        if now - self.last_gimbal_t < self.GIMBAL_PERIOD:   # 限频:转到位再发下一条
+        # 门控到检测率,一检测一发令:低发令率不压总线(消大跳),DUR≈间隔让舵机连续平滑。
+        stamp = self.latest_persons_stamp
+        if stamp == self.gimbal_last_proc_stamp:
             return
+        now = self._now()
+        if now - self.last_gimbal_t < self.GIMBAL_PERIOD:   # 安全限频
+            return
+        self.gimbal_last_proc_stamp = stamp
         ex = (cx - img_w / 2.0) / (img_w / 2.0)   # 归一化水平误差 [-1,1]
         if abs(ex) <= self.GIMBAL_DZ:
             return
-        step = _clamp(self.GIMBAL_GAIN * ex, -self.GIMBAL_STEP, self.GIMBAL_STEP)
-        # 目标在右(ex>0)→ yaw 增大右转(实测方向)
+        # 纯比例欠阻尼:每步只朝中心移一小部分(< 真实角误差)→ 延迟下单调逼近不过冲。
+        # 目标在右(ex>0)→ yaw 增大右转(实测方向)。DUR≈间隔→指令≈实际,无累积过冲。
+        # gain_scale<1(follow 模式):云台幅度变小,底盘做转向主力 → 解耦防耦合震荡。
+        step = _clamp(self.GIMBAL_KP * gain_scale * ex, -self.GIMBAL_STEP, self.GIMBAL_STEP)
         self.gimbal_yaw = _clamp(self.gimbal_yaw + step, *YAW_LIMIT)
         self.last_gimbal_t = now
         self._gimbal_publish()
 
-    def _gimbal_publish(self):
+    def _gimbal_publish(self, dur_ms=None):
+        dur = self.GIMBAL_DUR_MS if dur_ms is None else dur_ms
         self.arm.set_steer([self.gimbal_yaw, GIMBAL_FIXED[0], GIMBAL_FIXED[1],
-                            self.gimbal_pitch, GIMBAL_FIXED[2], GIMBAL_FIXED[3]], self.GIMBAL_DUR_MS)
+                            self.gimbal_pitch, GIMBAL_FIXED[2], GIMBAL_FIXED[3]], dur)
 
     def _gimbal_home(self):
         self.gimbal_yaw = YAW_HOME
+        self.gimbal_yaw_target = YAW_HOME
         self.gimbal_pitch = PITCH_HOME
         self.arm.set_steer([YAW_HOME, GIMBAL_FIXED[0], GIMBAL_FIXED[1],
                             PITCH_HOME, GIMBAL_FIXED[2], GIMBAL_FIXED[3]], 500)
@@ -526,17 +628,26 @@ class PersonFollow(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = PersonFollow()
+    from rclpy.executors import MultiThreadedExecutor
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
+        pass
+    except Exception:
         pass
     finally:
         try:
             node.pub_vel.publish(Twist())
         except Exception:
             pass
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

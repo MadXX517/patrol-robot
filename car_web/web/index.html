@@ -107,8 +107,20 @@
           <button id="cameraDownBtn" class="btn">下看</button>
         </div>
         <p class="hint compact" id="patrolState">巡逻:未运行</p>
-        <div class="button-row compact">
+        <p class="hint compact" id="gestureState">手势:未运行</p>
+        <div class="button-row grid-two compact">
+          <button id="gestureToggleBtn" class="btn primary">开启手势控制</button>
           <button id="patrolRelockBtn" class="btn">重新锁定目标</button>
+        </div>
+        <div class="button-row grid-two compact">
+          <button id="patrolFollowBtn" class="btn">智能跟随</button>
+          <button id="patrolTrackBtn" class="btn">云台追踪</button>
+        </div>
+        <div class="button-row compact">
+          <button id="patrolStopBtn" class="btn danger">停止跟随</button>
+        </div>
+        <div class="button-row grid-two compact">
+          <button id="lidarToggleBtn" class="btn">开启雷达</button>
         </div>
       </div>
 
