@@ -105,6 +105,30 @@ h3 {
   border-color: var(--green);
 }
 
+.badge.battery {
+  min-width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+.badge.battery-ok {
+  color: #ffffff;
+  background: var(--green);
+  border-color: var(--green);
+}
+.badge.battery-low {
+  color: #5b4500;
+  background: #ffd84d;
+  border-color: #e6c043;
+}
+.badge.battery-critical {
+  color: #ffffff;
+  background: #d93636;
+  border-color: #d93636;
+}
+.badge.battery-stale {
+  color: var(--muted);
+  background: #f8fafc;
+}
+
 .layout {
   width: 100%;
   max-width: 100%;

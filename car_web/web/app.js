@@ -37,6 +37,7 @@ const state = {
 
 const els = {
   statusText: document.getElementById('statusText'),
+  batteryBadge: document.getElementById('batteryBadge'),
   coreBadge: document.getElementById('coreBadge'),
   reportBadge: document.getElementById('reportBadge'),
   notifyBadge: document.getElementById('notifyBadge'),
@@ -159,6 +160,27 @@ function updateButtons(processes) {
   updateFeatureDetailButtons();
 }
 
+function renderBattery(battery) {
+  if (!els.batteryBadge) return;
+  const el = els.batteryBadge;
+  el.classList.remove('battery-ok', 'battery-low', 'battery-critical', 'battery-stale');
+  if (!battery || !battery.available) {
+    el.textContent = '电量 --';
+    el.classList.add('battery-stale');
+    return;
+  }
+  el.textContent = `电量 ${battery.percent}% (${battery.voltage}V)`;
+  if (!battery.fresh) {
+    el.classList.add('battery-stale');
+  } else if (battery.level === 'critical') {
+    el.classList.add('battery-critical');
+  } else if (battery.level === 'low') {
+    el.classList.add('battery-low');
+  } else {
+    el.classList.add('battery-ok');
+  }
+}
+
 function renderPatrolState(raw) {
   if (!els.patrolState) return;
   if (!raw) {
@@ -191,6 +213,7 @@ async function refreshStatus() {
     setStatus(`${modeText}，事件 ${data.events_count || 0} 条${data.last_error ? '，错误：' + data.last_error : ''}`, Boolean(data.last_error));
     renderReportJob(data.report_job);
     renderPatrolState(data.patrol_state);
+    renderBattery(data.battery);
   } catch (error) {
     setStatus(`后端连接失败：${error.message}`, true);
   }

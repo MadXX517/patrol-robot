@@ -17,7 +17,7 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import Float32, String
 
 
 CAMERA_TOPIC = '/camera/color/image_raw'
@@ -30,6 +30,7 @@ JOINT_STATES_TOPIC = '/joint_states'
 PERSON_FOLLOW_RESULT_TOPIC = '/person_follow/result_img'
 PATROL_CMD_TOPIC = '/patrol/command'
 PATROL_STATE_TOPIC = '/person_follow/state'
+POWER_VOLTAGE_TOPIC = '/PowerVoltage'
 JOINT_NAMES = ['joint0', 'joint1', 'joint2', 'joint3', 'joint4', 'joint5']
 JOINT_NAME_TO_INDEX = {
     'joint0': 0,
@@ -128,12 +129,22 @@ class DashboardNode(Node):
         self.declare_parameter('drive_timeout', 0.5)
         self.declare_parameter('max_linear_speed', 0.2)
         self.declare_parameter('max_angular_speed', 1.0)
+        # 电量:/PowerVoltage 发布的是串口原始字节(惯例为电压x10),scale 用于换算成伏特。
+        # full/empty 为该电池组满/空电压(伏特),用于估算百分比。上板实测后校准。
+        self.declare_parameter('voltage_scale', 0.1)
+        self.declare_parameter('voltage_full', 12.6)
+        self.declare_parameter('voltage_empty', 9.9)
 
         self.http_host = str(self.get_parameter('http_host').value)
         self.http_port = int(self.get_parameter('http_port').value)
         self.drive_timeout = max(0.1, float(self.get_parameter('drive_timeout').value))
         self.max_linear_speed = max(0.0, float(self.get_parameter('max_linear_speed').value))
         self.max_angular_speed = max(0.0, float(self.get_parameter('max_angular_speed').value))
+        self.voltage_scale = float(self.get_parameter('voltage_scale').value)
+        self.voltage_full = float(self.get_parameter('voltage_full').value)
+        self.voltage_empty = float(self.get_parameter('voltage_empty').value)
+        self.battery_raw = None
+        self.battery_stamp = 0.0
 
         self.web_dir = get_web_dir()
         self.lock = threading.RLock()
@@ -159,6 +170,7 @@ class DashboardNode(Node):
         self.create_subscription(String, EVENT_TOPIC, self.event_callback, 20)
         self.create_subscription(JointState, JOINT_STATES_TOPIC, self.joint_state_callback, 10)
         self.create_subscription(String, PATROL_STATE_TOPIC, self.patrol_state_callback, 5)
+        self.create_subscription(Float32, POWER_VOLTAGE_TOPIC, self.battery_callback, 10)
         self.create_timer(0.1, self.drive_timer_callback)
 
         self.http_server = ThreadingHTTPServer(
@@ -262,6 +274,7 @@ class DashboardNode(Node):
                 'can_drive': core_running,
                 'can_report': report_running,
                 'patrol_state': self.patrol_state,
+                'battery': self.battery_info(),
             }
 
     def get_events(self):
@@ -340,6 +353,42 @@ class DashboardNode(Node):
     def patrol_state_callback(self, msg):
         with self.lock:
             self.patrol_state = msg.data
+
+    def battery_callback(self, msg):
+        with self.lock:
+            self.battery_raw = float(msg.data)
+            self.battery_stamp = time.monotonic()
+
+    def battery_info(self):
+        with self.lock:
+            raw = self.battery_raw
+            stamp = self.battery_stamp
+            scale = self.voltage_scale
+            full = self.voltage_full
+            empty = self.voltage_empty
+        if raw is None:
+            return {'available': False}
+        fresh = (time.monotonic() - stamp) < 5.0
+        voltage = raw * scale
+        if full > empty:
+            percent = (voltage - empty) / (full - empty) * 100.0
+        else:
+            percent = 0.0
+        percent = max(0, min(100, int(round(percent))))
+        if percent <= 15:
+            level = 'critical'
+        elif percent <= 35:
+            level = 'low'
+        else:
+            level = 'ok'
+        return {
+            'available': True,
+            'fresh': fresh,
+            'voltage': round(voltage, 1),
+            'percent': percent,
+            'level': level,
+            'raw': round(raw, 1),
+        }
 
     def start_manual_mode(self):
         self.start_core()
