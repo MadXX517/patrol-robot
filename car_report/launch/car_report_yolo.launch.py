@@ -34,6 +34,16 @@ def generate_launch_description():
         default_value='',
         description='Comma-separated class names; empty means all classes'
     )
+    confirm_frames_arg = DeclareLaunchArgument(
+        'confirm_frames',
+        default_value='1',
+        description='Consecutive detected frames required before recording an event'
+    )
+    area_name_arg = DeclareLaunchArgument(
+        'area_name',
+        default_value='通信节点外围警戒线',
+        description='Security area name written into event JSON'
+    )
     save_image_arg = DeclareLaunchArgument(
         'save_image',
         default_value='true',
@@ -96,6 +106,7 @@ def generate_launch_description():
             'rknn_model': LaunchConfiguration('yolo_rknn_model'),
             'image_topic': LaunchConfiguration('image_topic'),
             'conf_thres': ParameterValue(LaunchConfiguration('yolo_conf_thres'), value_type=float),
+            'target_classes': LaunchConfiguration('target_classes'),
             'show_result': ParameterValue(LaunchConfiguration('yolo_show_result'), value_type=bool),
             'pub_result_img': ParameterValue(LaunchConfiguration('yolo_pub_result_img'), value_type=bool),
         }]
@@ -113,6 +124,8 @@ def generate_launch_description():
             'min_score': ParameterValue(LaunchConfiguration('min_score'), value_type=float),
             'cooldown_sec': ParameterValue(LaunchConfiguration('cooldown_sec'), value_type=float),
             'target_classes': LaunchConfiguration('target_classes'),
+            'confirm_frames': ParameterValue(LaunchConfiguration('confirm_frames'), value_type=int),
+            'area_name': LaunchConfiguration('area_name'),
             'save_image': ParameterValue(LaunchConfiguration('save_image'), value_type=bool),
             'max_image_bytes': ParameterValue(LaunchConfiguration('max_image_bytes'), value_type=int),
             'jpeg_quality': ParameterValue(LaunchConfiguration('jpeg_quality'), value_type=int),
@@ -125,6 +138,8 @@ def generate_launch_description():
         min_score_arg,
         cooldown_sec_arg,
         target_classes_arg,
+        confirm_frames_arg,
+        area_name_arg,
         save_image_arg,
         max_image_bytes_arg,
         jpeg_quality_arg,

@@ -9,6 +9,7 @@ from cv_bridge import CvBridge
 import cv2
 
 import os
+from car_yolo.detection_filter import parse_target_classes, should_keep_class
 from car_yolo.rknn_yolov5 import RKNNYoloV5, load_class_names
 from interfaces.msg import ObjectInfo, ObjectsInfo
 
@@ -56,6 +57,9 @@ class YoloV5Ros2(Node):
         self.declare_parameter("image_topic", "/camera/color/image_raw", ParameterDescriptor(
             name="image_topic", description="Image topic, default: /camera/color/image_raw"))
 
+        self.declare_parameter("target_classes", "", ParameterDescriptor(
+            name="target_classes", description="Comma-separated class names to publish; empty means all classes"))
+
         self.declare_parameter("show_result", False, ParameterDescriptor(
             name="show_result", description="Whether to display detection results, default: False"))
 
@@ -91,6 +95,7 @@ class YoloV5Ros2(Node):
 
         self.show_result = self.get_parameter('show_result').value
         self.pub_result_img = self.get_parameter('pub_result_img').value
+        self.target_classes = parse_target_classes(self.get_parameter('target_classes').value)
         self.display_width = int(self.get_parameter('display_width').value)
         self.display_height = int(self.get_parameter('display_height').value)
 
@@ -178,6 +183,9 @@ class YoloV5Ros2(Node):
                 name = detect_result.names[category]
             else:
                 name = 'class_%d' % category
+            if not should_keep_class(name, self.target_classes):
+                continue
+
             detection2d = Detection2D()
             detection2d.id = name
             x1, y1, x2, y2 = boxes[index]
@@ -237,7 +245,7 @@ class YoloV5Ros2(Node):
             result_img_msg = self.bridge.cv2_to_imgmsg(image, encoding="rgb8")
             result_img_msg.header = msg.header
             self.result_img_pub.publish(result_img_msg)
-        if len(categories) > 0:
+        if self.result_msg.detections:
             self.yolo_result_pub.publish(self.result_msg)
   
 
