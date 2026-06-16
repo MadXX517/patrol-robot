@@ -25,6 +25,16 @@ def generate_launch_description():
     voltage_scale_arg = DeclareLaunchArgument('voltage_scale', default_value='0.178')
     voltage_full_arg = DeclareLaunchArgument('voltage_full', default_value='12.6')
     voltage_empty_arg = DeclareLaunchArgument('voltage_empty', default_value='9.9')
+    llm_api_key_arg = DeclareLaunchArgument(
+        'llm_api_key',
+        default_value='',
+        description='Optional DashScope API key override for car_llm voice control'
+    )
+    llm_wake_word_arg = DeclareLaunchArgument(
+        'llm_wake_word',
+        default_value='小星',
+        description='Wake word for car_llm voice control'
+    )
 
     node = Node(
         package='car_web',
@@ -38,6 +48,8 @@ def generate_launch_description():
             'voltage_scale': ParameterValue(LaunchConfiguration('voltage_scale'), value_type=float),
             'voltage_full': ParameterValue(LaunchConfiguration('voltage_full'), value_type=float),
             'voltage_empty': ParameterValue(LaunchConfiguration('voltage_empty'), value_type=float),
+            'llm_api_key': LaunchConfiguration('llm_api_key'),
+            'llm_wake_word': LaunchConfiguration('llm_wake_word'),
         }]
     )
 
@@ -48,5 +60,7 @@ def generate_launch_description():
         voltage_scale_arg,
         voltage_full_arg,
         voltage_empty_arg,
+        llm_api_key_arg,
+        llm_wake_word_arg,
         node,
     ])

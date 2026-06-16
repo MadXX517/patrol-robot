@@ -31,6 +31,7 @@ PERSON_FOLLOW_RESULT_TOPIC = '/person_follow/result_img'
 PATROL_CMD_TOPIC = '/patrol/command'
 PATROL_STATE_TOPIC = '/person_follow/state'
 POWER_VOLTAGE_TOPIC = '/PowerVoltage'
+PROCESS_NAMES = ('core', 'report', 'notify', 'voice', 'follow')
 JOINT_NAMES = ['joint0', 'joint1', 'joint2', 'joint3', 'joint4', 'joint5']
 JOINT_NAME_TO_INDEX = {
     'joint0': 0,
@@ -101,10 +102,25 @@ FEATURES = [
     {
         'id': 'voice_control',
         'name': '语音控制',
-        'description': '预留接口，后续接 car_llm 语音控制。',
-        'available': False,
+        'description': '启动 car_llm 语音识别、大模型解析、TTS 播报和机器人控制。',
+        'available': True,
     },
 ]
+
+FEATURE_STARTERS = {
+    'visual_patrol': 'start_report_mode',
+    'voice_control': 'start_voice_control',
+}
+
+FEATURE_STOPPERS = {
+    'visual_patrol': 'stop_report',
+    'voice_control': 'stop_voice',
+}
+
+PATROL_FEATURE_MODES = {
+    'human_follow': 'follow',
+    'gimbal_track': 'track_only',
+}
 
 
 class DashboardError(RuntimeError):
@@ -135,6 +151,8 @@ class DashboardNode(Node):
         self.declare_parameter('voltage_scale', 0.178)
         self.declare_parameter('voltage_full', 12.6)
         self.declare_parameter('voltage_empty', 9.9)
+        self.declare_parameter('llm_api_key', '')
+        self.declare_parameter('llm_wake_word', '小星')
 
         self.http_host = str(self.get_parameter('http_host').value)
         self.http_port = int(self.get_parameter('http_port').value)
@@ -146,13 +164,16 @@ class DashboardNode(Node):
         self.voltage_empty = float(self.get_parameter('voltage_empty').value)
         self.battery_raw = None
         self.battery_stamp = 0.0
+        self.llm_api_key = str(self.get_parameter('llm_api_key').value or '').strip()
+        self.llm_wake_word = str(self.get_parameter('llm_wake_word').value or '小星').strip() or '小星'
 
         self.web_dir = get_web_dir()
         self.lock = threading.RLock()
         self.processes = {}
         self.current_mode = 'idle'
         self.current_video_topic = CAMERA_TOPIC
-        self.active_feature = ''
+        self.active_features = set()
+        self.voice_mode = ''
         self.last_error = ''
         self.events = []
         self.report_job = None
@@ -246,13 +267,17 @@ class DashboardNode(Node):
 
     def status(self):
         with self.lock:
+            self._reconcile_active_features_locked()
             processes = {
                 name: self._process_state(name)
-                for name in ('core', 'report', 'notify', 'follow')
+                for name in PROCESS_NAMES
             }
             report_job = dict(self.report_job) if self.report_job else None
             core_running = self._is_running('core')
             report_running = self._is_running('report')
+            voice_running = self._is_running('voice')
+            follow_running = self._is_running('follow')
+            voice_mode = self.voice_mode
             current_video_topic = self.current_video_topic
 
         video_diagnostics = self.video_diagnostics(current_video_topic)
@@ -261,7 +286,8 @@ class DashboardNode(Node):
             return {
                 'ok': True,
                 'mode': self.current_mode,
-                'active_feature': self.active_feature,
+                'active_feature': self._primary_active_feature(),
+                'active_features': sorted(self.active_features),
                 'video_topic': current_video_topic,
                 'video_url': self.video_url(current_video_topic),
                 'stream_hint': self.video_hint(current_video_topic, video_diagnostics),
@@ -272,10 +298,13 @@ class DashboardNode(Node):
                 'last_event': self.events[-1] if self.events else None,
                 'report_job': report_job,
                 'last_error': self.last_error,
-                'can_drive': core_running,
+                'can_drive': core_running and not (voice_running and voice_mode == 'control') and not follow_running,
                 'can_report': report_running,
                 'patrol_state': self.patrol_state,
                 'battery': self.battery_info(),
+                'voice_mode': voice_mode,
+                'voice_wake_word': self.llm_wake_word,
+                'voice_configured': True,
             }
 
     def get_events(self):
@@ -284,8 +313,14 @@ class DashboardNode(Node):
 
     def get_features(self):
         with self.lock:
-            active_feature = self.active_feature
-        return {'ok': True, 'features': FEATURES, 'active_feature': active_feature}
+            self._reconcile_active_features_locked()
+            active_features = sorted(self.active_features)
+        return {
+            'ok': True,
+            'features': FEATURES,
+            'active_feature': active_features[0] if len(active_features) == 1 else '',
+            'active_features': active_features,
+        }
 
     def start_feature(self, payload):
         feature_id = str(payload.get('id', '')).strip()
@@ -294,48 +329,58 @@ class DashboardNode(Node):
             raise DashboardError('未知功能：%s' % feature_id, 404)
         if not feature.get('available'):
             raise DashboardError('%s 还只是预留入口，后续接入对应功能包。' % feature['name'], 501)
-        if feature_id == 'visual_patrol':
-            return self.start_report_mode()
-        if feature_id == 'human_follow':
-            return self.start_patrol('human_follow', 'follow')
-        if feature_id == 'gimbal_track':
-            return self.start_patrol('gimbal_track', 'track_only')
+        patrol_mode = PATROL_FEATURE_MODES.get(feature_id)
+        if patrol_mode:
+            return self.start_patrol(feature_id, patrol_mode)
+        
+        starter_name = FEATURE_STARTERS.get(feature_id)
+        if starter_name:
+            return getattr(self, starter_name)()
         raise DashboardError('%s 未配置启动逻辑。' % feature['name'], 501)
 
-    def stop_feature(self):
+    def stop_feature(self, payload=None):
+        feature_id = ''
+        if isinstance(payload, dict):
+            feature_id = str(payload.get('id', '')).strip()
         with self.lock:
-            active_feature = self.active_feature
-        if active_feature == 'visual_patrol':
-            return self.stop_report(update_mode=True)
-        if active_feature in ('human_follow', 'gimbal_track'):
+            active_features = set(self.active_features)
+            if not feature_id and len(active_features) == 1:
+                feature_id = next(iter(active_features))
+        if feature_id in PATROL_FEATURE_MODES:
             return self.stop_patrol()
-        if not active_feature:
+
+        stopper_name = FEATURE_STOPPERS.get(feature_id)
+        if stopper_name:
+            return getattr(self, stopper_name)(update_mode=True)
+        
+        if not active_features:
             return self.status()
-        with self.lock:
-            self.active_feature = ''
-        return self.status()
+        raise DashboardError('请指定要停止的功能。', 400)
 
     def start_patrol(self, feature_id, mode):
-        with self.lock:
-            active_feature = self.active_feature
-        if active_feature and active_feature not in ('human_follow', 'gimbal_track'):
-            self.stop_feature()
         self.start_core()
+        self.stop_report(update_mode=False)
+        self.stop_voice(update_mode=False)
+        self.stop_process('follow')
         self.start_process('follow', self.follow_command(mode))
         with self.lock:
             self.current_mode = feature_id
             self.current_video_topic = PERSON_FOLLOW_RESULT_TOPIC
-            self.active_feature = feature_id
+            self._remove_active_feature('human_follow')
+            self._remove_active_feature('gimbal_track')
+            self._add_active_feature(feature_id)
         return self.status()
 
-    def stop_patrol(self):
+    def stop_patrol(self, update_mode=True):
         self.publish_patrol_command('stop')
         self.stop_process('follow')
         self.publish_stop()
         with self.lock:
-            self.current_video_topic = CAMERA_TOPIC
-            self.current_mode = 'manual' if self._is_running('core') else 'idle'
-            self.active_feature = ''
+            if update_mode:
+                self.current_video_topic = CAMERA_TOPIC
+                self.current_mode = 'manual' if self._is_running('core') else 'idle'
+            self._remove_active_feature('human_follow')
+            self._remove_active_feature('gimbal_track')
             self.patrol_state = ''
         return self.status()
 
@@ -394,25 +439,21 @@ class DashboardNode(Node):
     def start_manual_mode(self):
         self.start_core()
         self.stop_report(update_mode=False)
+        self.stop_patrol(update_mode=False)
         self.publish_stop()
         with self.lock:
             self.current_mode = 'manual'
             self.current_video_topic = CAMERA_TOPIC
-            self.active_feature = ''
         return self.status()
 
     def start_report_mode(self):
-        with self.lock:
-            active_feature = self.active_feature
-        if active_feature and active_feature != 'visual_patrol':
-            self.stop_feature()
-
         self.start_core()
+        self.stop_patrol(update_mode=False)
         self.start_process('report', self.report_command())
         with self.lock:
             self.current_mode = 'report'
             self.current_video_topic = RESULT_TOPIC
-            self.active_feature = 'visual_patrol'
+            self._add_active_feature('visual_patrol')
         return self.status()
 
     def start_core(self):
@@ -431,23 +472,70 @@ class DashboardNode(Node):
             with self.lock:
                 self.current_video_topic = CAMERA_TOPIC
                 self.current_mode = 'manual' if self._is_running('core') else 'idle'
-                if self.active_feature == 'visual_patrol':
-                    self.active_feature = ''
+                self._remove_active_feature('visual_patrol')
         else:
             with self.lock:
-                if self.active_feature == 'visual_patrol':
-                    self.active_feature = ''
+                self._remove_active_feature('visual_patrol')
+        return self.status()
+
+    def start_voice_chat(self):
+        return self.start_voice_mode(voice_mode='chat', enable_ros_control=False)
+
+    def start_voice_control(self):
+        return self.start_voice_mode(voice_mode='control', enable_ros_control=True)
+
+    def start_voice_mode(self, voice_mode='control', enable_ros_control=True):
+        if voice_mode not in ('chat', 'control'):
+            raise DashboardError('语音模式只能是 chat 或 control。')
+
+        self.start_core()
+        if enable_ros_control:
+            self.stop_patrol(update_mode=False)
+        self.stop_process('voice')
+        self.publish_stop(repeat=3)
+        self.start_process('voice', self.voice_command(enable_ros_control=enable_ros_control))
+        with self.lock:
+            if self.current_mode == 'idle':
+                self.current_mode = 'manual'
+                self.current_video_topic = CAMERA_TOPIC
+            self._add_active_feature('voice_control')
+            self.voice_mode = voice_mode
+        return self.status()
+
+    def stop_voice(self, update_mode=True):
+        self.stop_process('voice')
+        self.publish_stop(repeat=3)
+        if update_mode:
+            with self.lock:
+                self.voice_mode = ''
+                self._remove_active_feature('voice_control')
+                if not self._is_running('report'):
+                    self.current_video_topic = CAMERA_TOPIC
+                    self.current_mode = 'manual' if self._is_running('core') else 'idle'
+        else:
+            with self.lock:
+                self.voice_mode = ''
+                self._remove_active_feature('voice_control')
+        return self.status()
+
+    def voice_safe_stop(self):
+        self.stop_voice(update_mode=True)
+        self.publish_stop(repeat=8)
         return self.status()
 
     def stop_core(self):
         self.stop_process('notify')
         self.stop_process('report')
+        self.stop_process('voice')
+        self.stop_process('follow')
         self.publish_stop(repeat=5)
         self.stop_process('core')
         with self.lock:
             self.current_mode = 'idle'
             self.current_video_topic = CAMERA_TOPIC
-            self.active_feature = ''
+            self.active_features.clear()
+            self.voice_mode = ''
+            self.patrol_state = ''
         return self.status()
 
     def stop_all(self):
@@ -468,15 +556,22 @@ class DashboardNode(Node):
         return self.status()
 
     def drive(self, payload):
-        with self.lock:
-            can_drive = self._is_running('core')
-        if not can_drive:
-            raise DashboardError('基础节点未运行，不能遥控。请先启动普通操作或识别记录。', 409)
-
         linear = float(payload.get('linear', 0.0))
         angular = float(payload.get('angular', 0.0))
         linear = self._clamp(linear, -self.max_linear_speed, self.max_linear_speed)
         angular = self._clamp(angular, -self.max_angular_speed, self.max_angular_speed)
+
+        with self.lock:
+            can_drive = self._is_running('core')
+            voice_running = self._is_running('voice')
+            voice_control_running = voice_running and self.voice_mode == 'control'
+            follow_running = self._is_running('follow')
+        if not can_drive:
+            raise DashboardError('基础节点未运行，不能遥控。请先启动普通操作或识别记录。', 409)
+        if voice_control_running and (abs(linear) > 1e-6 or abs(angular) > 1e-6):
+            raise DashboardError('语音控制运行中，已禁止手动遥控。请先停止语音控制。', 409)
+        if follow_running and (abs(linear) > 1e-6 or abs(angular) > 1e-6):
+            raise DashboardError('人体跟随运行中，已禁止手动遥控。请先停止跟随功能。', 409)
 
         with self.lock:
             self.target_linear = linear
@@ -540,6 +635,13 @@ class DashboardNode(Node):
     def publish_camera_joints(self, updates):
         if not self._is_running('core'):
             raise DashboardError('基础节点未运行，不能控制云台。请先启动普通操作或识别记录。', 409)
+        with self.lock:
+            voice_control_running = self._is_running('voice') and self.voice_mode == 'control'
+            follow_running = self._is_running('follow')
+        if voice_control_running:
+            raise DashboardError('语音控制运行中，已禁止手动云台控制。请先停止语音控制。', 409)
+        if follow_running:
+            raise DashboardError('人体跟随运行中，已禁止手动云台控制。请先停止跟随功能。', 409)
 
         with self.lock:
             if not self.have_joint_state:
@@ -659,6 +761,18 @@ class DashboardNode(Node):
             'min_score:=0.5'
         ]
 
+    def voice_command(self, enable_ros_control=True):
+        command = [
+            'ros2', 'launch', 'car_llm', 'car_llm.launch.py',
+            'enable_ros_control:=%s' % ('true' if enable_ros_control else 'false'),
+            'mic_trigger:=continuous',
+            'start_base:=false',
+            'wake_word:=%s' % self.llm_wake_word,
+        ]
+        if self.llm_api_key:
+            command.insert(4, 'api_key:=%s' % self.llm_api_key)
+        return command
+
     @staticmethod
     def follow_command(mode):
         return [
@@ -714,7 +828,7 @@ class DashboardNode(Node):
             if old_proc is not None and old_proc.poll() is not None:
                 self.processes.pop(name, None)
 
-            self.get_logger().info('starting %s: %s' % (name, ' '.join(command)))
+            self.get_logger().info('starting %s: %s' % (name, ' '.join(self._redact_command(command))))
             try:
                 kwargs = {}
                 if os.name == 'nt':
@@ -780,9 +894,40 @@ class DashboardNode(Node):
             'pid': proc.pid,
         }
 
+    def _add_active_feature(self, feature_id):
+        self.active_features.add(feature_id)
+
+    def _remove_active_feature(self, feature_id):
+        self.active_features.discard(feature_id)
+
+    def _primary_active_feature(self):
+        if len(self.active_features) == 1:
+            return next(iter(self.active_features))
+        return ''
+
+    def _reconcile_active_features_locked(self):
+        if not self._is_running('report'):
+            self.active_features.discard('visual_patrol')
+        if not self._is_running('voice'):
+            self.active_features.discard('voice_control')
+            self.voice_mode = ''
+        if not self._is_running('follow'):
+            self.active_features.discard('human_follow')
+            self.active_features.discard('gimbal_track')
+
     @staticmethod
     def _clamp(value, lower, upper):
         return max(lower, min(upper, value))
+
+    @staticmethod
+    def _redact_command(command):
+        redacted = []
+        for item in command:
+            if str(item).startswith('api_key:='):
+                redacted.append('api_key:=***')
+            else:
+                redacted.append(item)
+        return redacted
 
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
@@ -837,7 +982,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             elif self.path == '/api/features/start':
                 result = dashboard.start_feature(payload)
             elif self.path == '/api/features/stop':
-                result = dashboard.stop_feature()
+                result = dashboard.stop_feature(payload)
+            elif self.path == '/api/voice/start_chat':
+                result = dashboard.start_voice_chat()
+            elif self.path == '/api/voice/start_control':
+                result = dashboard.start_voice_control()
+            elif self.path == '/api/voice/stop':
+                result = dashboard.stop_voice()
+            elif self.path == '/api/voice/safe_stop':
+                result = dashboard.voice_safe_stop()
             elif self.path == '/api/servo/reset':
                 result = dashboard.servo_reset()
             elif self.path == '/api/servo/camera_left':

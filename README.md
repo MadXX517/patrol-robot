@@ -6,6 +6,7 @@
 - `car_yolo`：YOLO/RKNN 目标识别和 `/result_img` 置信框画面。
 - `car_report`：视觉事件记录、截图保存、GLM 文本/图文报告生成。
 - `car_notify`：订阅视觉事件并通过钉钉机器人推送告警。
+- `car_llm`：语音识别、大模型指令解析、TTS 播报和语音控制。
 
 ## 最常用流程
 
@@ -35,6 +36,12 @@ source install/setup.bash
 ros2 launch car_web car_web.launch.py
 ```
 
+语音控制默认使用 `car_llm` 里写死的 DashScope API Key，一般不用额外传参。只有默认 key 失效或要换账号时，才这样覆盖：
+
+```bash
+ros2 launch car_web car_web.launch.py llm_api_key:=你的DashScope_API_KEY
+```
+
 浏览器打开：
 
 ```text
@@ -47,7 +54,9 @@ http://RK3588_IP:8000
 http://192.168.0.102:8000
 ```
 
-打开网页后，普通前方画面会自动启动。后续普通操作、功能中心、识别记录、钉钉通知、遥控、底盘复位、云台控制和报告生成都在网页按钮里完成。
+打开网页后，普通前方画面会自动启动。后续普通操作、功能中心、识别记录、钉钉通知、语音控制、遥控、底盘复位、云台控制和报告生成都在网页按钮里完成。
+
+功能中心里的“语音控制”分为“仅语音对话”和“语音控制小车”。前者只测试 ASR/LLM/TTS，不抢 `/cmd_vel` 和 `/ik_states`；后者会接管小车控制，运行时网页手动方向键和云台按钮会禁用。语音功能可以和普通画面或 YOLO 识别画面同时运行。
 
 如果同学已经配置了自动 source，可以不手动执行 `source install/setup.bash`。如果出现 `package 'car_web' not found`，先执行 source；还不行就重新 build。
 
@@ -119,6 +128,18 @@ ros2 run car_report report_generator --api-test
 ```bash
 ros2 run car_notify dingtalk_notifier --webhook-test
 ```
+
+单独测试语音对话，不控制车：
+
+```bash
+ros2 launch car_llm car_llm.launch.py enable_ros_control:=false mic_trigger:=continuous
+```
+
+单独测试语音控制，会由 `car_llm` 自己启动底盘基础节点：
+
+```bash
+ros2 launch car_llm car_llm.launch.py enable_ros_control:=true mic_trigger:=continuous start_base:=true
+```
 ## 网页操作台
 
 详细说明见：`car_web/README.md`。
@@ -130,6 +151,7 @@ ros2 launch car_base car_app.launch.py
 ros2 launch car_base car_camera.launch.py
 ros2 launch car_report car_report_yolo.launch.py
 ros2 launch car_notify dingtalk_notify.launch.py
+ros2 launch car_llm car_llm.launch.py
 ros2 run web_video_server web_video_server
 ```
 
@@ -141,7 +163,7 @@ ros2 run web_video_server web_video_server
 - `car_yolo/`：YOLO/RKNN 识别，发布 `/car_yolo/object_detect` 和可选 `/result_img`。
 - `car_report/`：把 YOLO 结果记录为事件，保存 JSONL、截图，并生成 GLM 巡逻报告。
 - `car_notify/`：订阅 `/car_report/event`，通过钉钉机器人推送告警。
-- `car_web/`：网页操作台，包装遥控、视频、功能中心、事件记录、通知和报告生成。
+- `car_web/`：网页操作台，包装遥控、视频、功能中心、事件记录、通知、语音控制和报告生成。
 - `car_llm/`：语音和大模型控制相关代码。
 - `car_vision/`、`car_app/`：视觉任务、跟随、颜色识别、手势、导航辅助等功能。
 - `depend/`、`OrbbecSDK_ROS2/`：第三方 ROS2 依赖和相机相关包。
@@ -183,7 +205,7 @@ ros2 run car_notify dingtalk_notifier --webhook-test
 - 每次新增 ROS2 包、改 `setup.py`、改 `package.xml`、改 launch 文件后，都要重新 `colcon build`。
 - 推荐继续使用 `--symlink-install`；网页静态文件已兼容这种构建方式。
 - 只改 Python、HTML、CSS、JS 时，`--symlink-install` 下通常能直接反映；上车演示前仍建议重新 build 一次。
-- 网页操作台 v1 只接遥控、底盘复位、云台控制、普通视频、YOLO 事件记录、钉钉通知和报告；导航、SLAM、语音、机械臂后续稳定后再接入。
+- 网页操作台 v1 只接遥控、底盘复位、云台控制、普通视频、YOLO 事件记录、钉钉通知、语音控制和报告；导航、SLAM、机械臂其它功能后续稳定后再接入。
 - 小车遥控有风险，测试时先架空轮子或确保周围安全。
 
 

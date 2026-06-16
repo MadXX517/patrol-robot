@@ -358,6 +358,10 @@ h3 {
   margin-top: 8px;
 }
 
+.voice-controls {
+  margin-top: 8px;
+}
+
 .primary {
   color: #ffffff;
   background: var(--blue);

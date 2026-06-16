@@ -17,6 +17,7 @@
       <span id="coreBadge" class="badge">core</span>
       <span id="reportBadge" class="badge">report</span>
       <span id="notifyBadge" class="badge">notify</span>
+      <span id="voiceBadge" class="badge">voice</span>
     </div>
   </header>
 
@@ -68,9 +69,20 @@
           <h3 id="featureDetailName">功能详情</h3>
           <p id="featureDetailDesc" class="hint compact"></p>
           <p id="featureDetailStatus" class="hint compact"></p>
-          <div class="button-row grid-two compact">
+          <div id="featureActionRow" class="button-row grid-two compact">
             <button id="featureStartBtn" class="btn primary">启动功能</button>
             <button id="featureStopBtn" class="btn">停止功能</button>
+          </div>
+          <div id="voiceControls" class="voice-controls hidden">
+            <div class="button-row grid-two compact">
+              <button id="voiceChatBtn" class="btn">仅语音对话</button>
+              <button id="voiceControlBtn" class="btn primary">语音控制小车</button>
+            </div>
+            <div class="button-row grid-two compact">
+              <button id="voiceStopBtn" class="btn">停止语音</button>
+              <button id="voiceSafeStopBtn" class="btn danger">安全停车</button>
+            </div>
+            <p id="voiceExample" class="hint compact">示例：小星，自我介绍一下；小星，向前移动十厘米。</p>
           </div>
         </div>
       </div>

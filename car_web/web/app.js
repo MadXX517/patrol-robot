@@ -21,6 +21,10 @@ const api = {
   cameraDown: '/api/servo/camera_down',
   patrolRelock: '/api/patrol/relock',
   generateReport: '/api/report/generate',
+  voiceStartChat: '/api/voice/start_chat',
+  voiceStartControl: '/api/voice/start_control',
+  voiceStop: '/api/voice/stop',
+  voiceSafeStop: '/api/voice/safe_stop',
 };
 
 const state = {
@@ -32,7 +36,11 @@ const state = {
   features: [],
   selectedFeatureId: '',
   activeFeature: '',
+  activeFeatures: [],
   videoFailed: false,
+  voiceWakeWord: '小星',
+  voiceConfigured: false,
+  voiceMode: '',
 };
 
 const els = {
@@ -41,6 +49,7 @@ const els = {
   coreBadge: document.getElementById('coreBadge'),
   reportBadge: document.getElementById('reportBadge'),
   notifyBadge: document.getElementById('notifyBadge'),
+  voiceBadge: document.getElementById('voiceBadge'),
   videoTopic: document.getElementById('videoTopic'),
   videoHint: document.getElementById('videoHint'),
   videoLink: document.getElementById('videoLink'),
@@ -65,8 +74,15 @@ const els = {
   featureDetailName: document.getElementById('featureDetailName'),
   featureDetailDesc: document.getElementById('featureDetailDesc'),
   featureDetailStatus: document.getElementById('featureDetailStatus'),
+  featureActionRow: document.getElementById('featureActionRow'),
   featureStartBtn: document.getElementById('featureStartBtn'),
   featureStopBtn: document.getElementById('featureStopBtn'),
+  voiceControls: document.getElementById('voiceControls'),
+  voiceChatBtn: document.getElementById('voiceChatBtn'),
+  voiceControlBtn: document.getElementById('voiceControlBtn'),
+  voiceStopBtn: document.getElementById('voiceStopBtn'),
+  voiceSafeStopBtn: document.getElementById('voiceSafeStopBtn'),
+  voiceExample: document.getElementById('voiceExample'),
   cameraLeftBtn: document.getElementById('cameraLeftBtn'),
   cameraRightBtn: document.getElementById('cameraRightBtn'),
   cameraUpBtn: document.getElementById('cameraUpBtn'),
@@ -139,6 +155,8 @@ function updateButtons(processes) {
   const coreRunning = processes.core && processes.core.running;
   const reportRunning = processes.report && processes.report.running;
   const notifyRunning = processes.notify && processes.notify.running;
+  const voiceRunning = processes.voice && processes.voice.running;
+  const voiceControlRunning = voiceRunning && state.voiceMode === 'control';
 
   els.coreStopBtn.disabled = !coreRunning;
   els.reportBtn.disabled = reportRunning;
@@ -147,16 +165,21 @@ function updateButtons(processes) {
   els.notifyStopBtn.disabled = !notifyRunning;
   els.reportTextBtn.disabled = !reportRunning;
   els.reportVisionBtn.disabled = !reportRunning;
-  els.allStopBtn.disabled = !coreRunning && !reportRunning && !notifyRunning;
+  const followRunning = processes.follow && processes.follow.running;
+  els.allStopBtn.disabled = !coreRunning && !reportRunning && !notifyRunning && !voiceRunning && !followRunning;
   els.chassisResetBtn.disabled = !coreRunning;
-  els.cameraLeftBtn.disabled = !coreRunning;
-  els.cameraRightBtn.disabled = !coreRunning;
-  els.cameraUpBtn.disabled = !coreRunning;
-  els.cameraDownBtn.disabled = !coreRunning;
-  els.servoResetBtn.disabled = !coreRunning;
+  const controlBusy = voiceControlRunning || followRunning;
+  els.cameraLeftBtn.disabled = !coreRunning || controlBusy;
+  els.cameraRightBtn.disabled = !coreRunning || controlBusy;
+  els.cameraUpBtn.disabled = !coreRunning || controlBusy;
+  els.cameraDownBtn.disabled = !coreRunning || controlBusy;
+  els.servoResetBtn.disabled = !coreRunning || controlBusy;
   if (els.patrolRelockBtn) {
-    els.patrolRelockBtn.disabled = !(processes.follow && processes.follow.running);
+    els.patrolRelockBtn.disabled = !followRunning;
   }
+  document.querySelectorAll('.drive[data-linear]').forEach((button) => {
+    button.disabled = !coreRunning || controlBusy;
+  });
   updateFeatureDetailButtons();
 }
 
@@ -204,12 +227,17 @@ async function refreshStatus() {
     setBadge(els.coreBadge, 'core', processes.core && processes.core.running);
     setBadge(els.reportBadge, 'report', processes.report && processes.report.running);
     setBadge(els.notifyBadge, 'notify', processes.notify && processes.notify.running);
+    setBadge(els.voiceBadge, 'voice', processes.voice && processes.voice.running);
     state.activeFeature = data.active_feature || '';
+    state.activeFeatures = data.active_features || (state.activeFeature ? [state.activeFeature] : []);
+    state.voiceWakeWord = data.voice_wake_word || '小星';
+    state.voiceConfigured = Boolean(data.voice_configured);
+    state.voiceMode = data.voice_mode || '';
     setVideo(data);
     updateButtons(processes);
     updateFeatureCards();
     renderSelectedFeatureDetail();
-    const modeText = data.mode === 'report' ? '识别记录模式' : data.mode === 'manual' ? '普通操作模式' : '空闲';
+    const modeText = buildModeText(data.mode);
     setStatus(`${modeText}，事件 ${data.events_count || 0} 条${data.last_error ? '，错误：' + data.last_error : ''}`, Boolean(data.last_error));
     renderReportJob(data.report_job);
     renderPatrolState(data.patrol_state);
@@ -236,6 +264,7 @@ async function loadFeatures() {
     const data = await request(api.features);
     state.features = data.features || [];
     state.activeFeature = data.active_feature || state.activeFeature;
+    state.activeFeatures = data.active_features || (state.activeFeature ? [state.activeFeature] : state.activeFeatures);
     renderFeatures(state.features);
     state.featuresLoaded = true;
   } catch (error) {
@@ -250,10 +279,10 @@ function renderFeatures(features) {
   }
 
   els.featureGrid.innerHTML = features.map((feature) => `
-    <button class="feature-card${feature.id === state.activeFeature ? ' active' : ''}${feature.available ? '' : ' disabled'}" data-feature-id="${escapeHtml(feature.id)}">
+    <button class="feature-card${isFeatureActive(feature.id) ? ' active' : ''}${feature.available ? '' : ' disabled'}" data-feature-id="${escapeHtml(feature.id)}">
       <strong>${escapeHtml(feature.name)}</strong>
       <span>${escapeHtml(feature.description || '')}</span>
-      <em>${feature.id === state.activeFeature ? '运行中' : feature.available ? '可进入' : '预留'}</em>
+      <em>${isFeatureActive(feature.id) ? '运行中' : feature.available ? '可进入' : '预留'}</em>
     </button>
   `).join('');
 
@@ -265,7 +294,7 @@ function renderFeatures(features) {
 function updateFeatureCards() {
   els.featureGrid.querySelectorAll('.feature-card').forEach((card) => {
     const feature = getFeature(card.dataset.featureId);
-    const active = feature && feature.id === state.activeFeature;
+    const active = feature && isFeatureActive(feature.id);
     card.classList.toggle('active', Boolean(active));
     const status = card.querySelector('em');
     if (feature && status) {
@@ -305,19 +334,38 @@ function renderSelectedFeatureDetail() {
     return;
   }
 
-  const active = feature.id === state.activeFeature;
+  const active = isFeatureActive(feature.id);
   els.featureDetailName.textContent = feature.name;
   els.featureDetailDesc.textContent = feature.description || '';
-  els.featureDetailStatus.textContent = active ? '状态：运行中' : feature.available ? '状态：未启动' : '状态：预留入口，暂未接入启动逻辑';
+  if (feature.id === 'voice_control') {
+    const wake = state.voiceWakeWord || '小星';
+    const configured = state.voiceConfigured ? '已配置 API Key' : '未配置 API Key';
+    const modeText = state.voiceMode === 'control' ? '语音控制小车' : state.voiceMode === 'chat' ? '仅语音对话' : '未运行';
+    els.featureDetailStatus.textContent = active
+      ? `状态：${modeText}；唤醒词：${wake}。`
+      : `状态：未启动；${configured}；启动后先说唤醒词“${wake}”。`;
+    els.voiceExample.textContent = `示例：${wake}，自我介绍一下；${wake}，向前移动十厘米。`;
+  } else {
+    els.featureDetailStatus.textContent = active ? '状态：运行中' : feature.available ? '状态：未启动' : '状态：预留入口，暂未接入启动逻辑';
+  }
   updateFeatureDetailButtons();
 }
 
 function updateFeatureDetailButtons() {
   const feature = getFeature(state.selectedFeatureId);
-  const active = feature && feature.id === state.activeFeature;
+  const active = feature && isFeatureActive(feature.id);
   const available = feature && feature.available;
+  const isVoice = feature && feature.id === 'voice_control';
+  const voiceRunning = isVoice && active;
+  const voiceAvailable = Boolean(available && state.voiceConfigured);
+  els.featureActionRow.classList.toggle('hidden', Boolean(isVoice));
+  els.voiceControls.classList.toggle('hidden', !isVoice);
   els.featureStartBtn.disabled = !available || active;
   els.featureStopBtn.disabled = !active;
+  els.voiceChatBtn.disabled = !voiceAvailable || (voiceRunning && state.voiceMode === 'chat');
+  els.voiceControlBtn.disabled = !voiceAvailable || (voiceRunning && state.voiceMode === 'control');
+  els.voiceStopBtn.disabled = !voiceRunning;
+  els.voiceSafeStopBtn.disabled = !voiceRunning;
 }
 
 async function startFeature(id) {
@@ -332,7 +380,40 @@ async function startFeature(id) {
 
 async function stopFeature() {
   try {
-    await request(api.featureStop, { method: 'POST' });
+    await request(api.featureStop, { method: 'POST', body: { id: state.selectedFeatureId } });
+    await refreshStatus();
+    await refreshEvents();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function isFeatureActive(id) {
+  return state.activeFeatures.includes(id);
+}
+
+function buildModeText(mode) {
+  const parts = [];
+  if (isFeatureActive('human_follow')) {
+    parts.push('人体跟随');
+  } else if (isFeatureActive('gimbal_track')) {
+    parts.push('云台追踪');
+  } else if (mode === 'report' || isFeatureActive('visual_patrol')) {
+    parts.push('识别记录');
+  } else if (mode === 'manual') {
+    parts.push('普通画面');
+  }
+
+  if (isFeatureActive('voice_control')) {
+    parts.push(state.voiceMode === 'control' ? '语音控制小车' : '仅语音对话');
+  }
+
+  return parts.length ? `${parts.join(' + ')}模式` : '空闲';
+}
+
+async function startVoice(path) {
+  try {
+    await request(path, { method: 'POST' });
     await refreshStatus();
     await refreshEvents();
   } catch (error) {
@@ -466,6 +547,10 @@ function bindControls() {
   els.featureBackBtn.addEventListener('click', showFeatureList);
   els.featureStartBtn.addEventListener('click', () => startFeature(state.selectedFeatureId));
   els.featureStopBtn.addEventListener('click', stopFeature);
+  els.voiceChatBtn.addEventListener('click', () => startVoice(api.voiceStartChat));
+  els.voiceControlBtn.addEventListener('click', () => startVoice(api.voiceStartControl));
+  els.voiceStopBtn.addEventListener('click', () => startVoice(api.voiceStop));
+  els.voiceSafeStopBtn.addEventListener('click', () => startVoice(api.voiceSafeStop));
   els.chassisResetBtn.addEventListener('click', () => postAction(api.chassisReset, '底盘复位'));
   els.cameraLeftBtn.addEventListener('click', () => postAction(api.cameraLeft, '摄像头左看'));
   els.cameraRightBtn.addEventListener('click', () => postAction(api.cameraRight, '摄像头右看'));

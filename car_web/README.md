@@ -8,6 +8,7 @@
 - `car_yolo`：启动 YOLO/RKNN 识别，输出 `/car_yolo/object_detect` 和 `/result_img`。
 - `car_report`：订阅 YOLO 结果，生成事件 JSON、截图和 Markdown 报告。
 - `car_notify`：订阅 `/car_report/event`，推送钉钉 markdown 告警。
+- `car_llm`：启动语音识别、大模型指令解析、TTS 播报和语音控制。
 
 ## 构建和启动
 
@@ -35,6 +36,12 @@ source install/setup.bash
 
 ```bash
 ros2 launch car_web car_web.launch.py
+```
+
+语音控制默认使用 `car_llm` 里写死的 DashScope API Key，一般不用额外传参。只有默认 key 失效或要换账号时，才这样覆盖：
+
+```bash
+ros2 launch car_web car_web.launch.py llm_api_key:=你的DashScope_API_KEY
 ```
 
 浏览器访问：
@@ -112,6 +119,18 @@ API 和 webhook 单测：
 ros2 run car_report report_generator --api-test
 ros2 run car_notify dingtalk_notifier --webhook-test
 ```
+
+语音对话单测，不控制车：
+
+```bash
+ros2 launch car_llm car_llm.launch.py enable_ros_control:=false mic_trigger:=continuous
+```
+
+语音控制单测，会由 `car_llm` 自己启动底盘基础节点：
+
+```bash
+ros2 launch car_llm car_llm.launch.py enable_ros_control:=true mic_trigger:=continuous start_base:=true
+```
 ## 启动关系
 
 网页后端启动后会自动启动基础链路：
@@ -145,11 +164,31 @@ car_notify/launch/dingtalk_notify.launch.py cooldown_sec:=60
 
 钉钉依赖 `/car_report/event`，所以必须先处于识别记录模式。
 
+进入“语音控制”详情后，有两个启动入口：
+
+```text
+仅语音对话
+  -> car_llm.launch.py enable_ros_control:=false start_base:=false mic_trigger:=continuous
+  -> ASR 语音识别
+  -> LLM 指令解析
+  -> TTS 播报
+
+语音控制小车
+  -> car_llm.launch.py enable_ros_control:=true start_base:=false mic_trigger:=continuous
+  -> ASR 语音识别
+  -> LLM 指令解析
+  -> TTS 播报
+  -> ros_control 发布 /cmd_vel、/ik_states、/chat_model/whichone
+```
+
+`start_base:=false` 表示语音功能复用网页已经启动的 core，不重复启动底盘、相机或 8080 视频服务。“安全停车”会停止语音进程并连续发送零速度。语音功能不占用视频链路，可以和普通画面或 `/result_img` 识别画面同时运行。
+
 ## 功能中心
 
 当前功能中心已经接入：
 
 - 视觉巡逻：启动 `car_report_yolo.launch.py`，显示 `/result_img` 置信框画面，记录 `/car_report/event`。
+- 语音控制：启动 `car_llm.launch.py`，可选择“仅语音对话”或“语音控制小车”，唤醒词默认“小星”。
 
 当前只保留入口、暂不启动节点的功能：
 
@@ -157,18 +196,18 @@ car_notify/launch/dingtalk_notify.launch.py cooldown_sec:=60
 - 姿态检测
 - 颜色追踪
 - 雷达控制
-- 语音控制
 
-切换到一个真正启动的功能前，后端会先关闭上一个功能由 Web 自己启动的 report/notify 等节点，避免竞争。core 是共享基础链路，功能切换时默认保留；只有“关闭基础”或“全部停止”才关闭 core。
+后端按资源占用处理冲突，不再简单地只允许一个功能运行。core 是共享基础链路，功能切换时默认保留；视觉巡逻和语音可以同时运行；只有“关闭基础”或“全部停止”才关闭 core。会抢 `/cmd_vel`、`/ik_states` 的“语音控制小车”运行时，网页手动方向键和云台按钮会禁用。
 
 ## 按钮含义
 
-- 普通操作：保持 core 运行，关闭识别和钉钉，画面回到 `/camera/color/image_raw`。
-- 关闭基础：先关闭识别和钉钉，再关闭 core；同时发送零速度。
+- 普通操作：保持 core 运行，关闭识别和钉钉，画面回到 `/camera/color/image_raw`；如果语音正在运行，会继续保留。
+- 关闭基础：先关闭识别、钉钉和语音，再关闭 core；同时发送零速度。
 - 识别记录：确保 core 已运行，再启动 YOLO 和事件记录，画面切到 `/result_img`。
 - 关闭识别：关闭 report 和 notify，core 保持运行，画面回到普通相机。
-- 全部停止：关闭 Web 自己启动的 core、report、notify，并发送零速度。
+- 全部停止：关闭 Web 自己启动的 core、report、notify、voice，并发送零速度。
 - 功能列表：打开同页功能中心，点击功能卡片只看详情，不直接启动。
+- 语音控制：详情页内有“仅语音对话”“语音控制小车”“停止语音”“安全停车”。启动后请先说“小星”；只有“语音控制小车”运行时，手动方向键和云台按钮会禁用，避免同时发布 `/cmd_vel` 或 `/ik_states`。
 - 底盘复位：连续发布零速度到 `/cmd_vel`，相当于轮子/底盘停车复位；它不控制云台，也不关闭节点。
 - 云台回中：通过 `/ik_states` 设置 `joint0=0`、`joint3=1.2`，让摄像头云台回到中位。
 - 左看/右看：通过 `/ik_states` 微调 `joint0`。
@@ -210,6 +249,7 @@ ros2 launch car_base car_app.launch.py
 ros2 launch car_base car_camera.launch.py
 ros2 launch car_report car_report_yolo.launch.py
 ros2 launch car_notify dingtalk_notify.launch.py
+ros2 launch car_llm car_llm.launch.py
 ros2 run web_video_server web_video_server
 ```
 
@@ -248,6 +288,14 @@ ros2 topic echo /ik_states
 ```
 
 `/ik_states` 的 `position` 应包含 7 个值：前 6 个是关节角，最后 1 个是动作时间。左看/右看会改变 `joint0`，上看/下看会改变 `joint3`，云台回中会把 `joint0` 设为 `0`、`joint3` 设为约 `1.2`。
+
+看语音控制是否发布底盘或云台控制：
+
+```bash
+ros2 topic echo /cmd_vel
+ros2 topic echo /ik_states
+ros2 topic echo /chat_model/whichone
+```
 
 单独测试 GLM API：
 

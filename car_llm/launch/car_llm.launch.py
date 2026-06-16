@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, ExecuteProcess, RegisterEventHandler
 from launch.event_handlers import OnProcessStart, OnProcessExit
-from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
+from launch.substitutions import PathJoinSubstitution, LaunchConfiguration, PythonExpression
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument, TimerAction, LogInfo
@@ -87,11 +87,23 @@ def generate_launch_description():
         description='enable robot control (arm/chassis); first stage keeps it false'
     )
 
+    start_base_arg = DeclareLaunchArgument(
+        'start_base',
+        default_value='true',
+        description='start car_base when robot control is enabled'
+    )
+
     # 麦克风触发方式:continuous=持续聆听(无按钮 aibox,默认);button=按键按住说话
     mic_trigger_arg = DeclareLaunchArgument(
         'mic_trigger',
         default_value='continuous',
         description='mic trigger: continuous (always-on, no button) or button'
+    )
+
+    wake_word_arg = DeclareLaunchArgument(
+        'wake_word',
+        default_value='小星',
+        description='wake word for voice control'
     )
 
     # ============================ 实现部分 ============================ #
@@ -101,7 +113,10 @@ def generate_launch_description():
             FindPackageShare('car_base'),
             'launch/car_base.launch.py'
         ]),
-        condition=IfCondition(LaunchConfiguration('enable_ros_control')),
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('enable_ros_control'), "'.lower() in ['true', '1', 'yes', 'on'] and '",
+            LaunchConfiguration('start_base'), "'.lower() in ['true', '1', 'yes', 'on']"
+        ])),
     )
 
     # llm_main.py 安装于 share/car_llm/src/(见 setup.py),不再硬编码 /home/pi 路径
@@ -126,7 +141,8 @@ def generate_launch_description():
             '--asr_model', LaunchConfiguration('asr_model'),
             '--max_sentence_silence', LaunchConfiguration('max_sentence_silence'),
             '--enable_ros_control', LaunchConfiguration('enable_ros_control'),
-            '--mic_trigger', LaunchConfiguration('mic_trigger')
+            '--mic_trigger', LaunchConfiguration('mic_trigger'),
+            '--wake_word', LaunchConfiguration('wake_word')
         ],
         output='screen',
         emulate_tty=True,
@@ -145,7 +161,9 @@ def generate_launch_description():
     ld.add_action(asr_model_arg)
     ld.add_action(max_sentence_silence_arg)
     ld.add_action(enable_ros_control_arg)
+    ld.add_action(start_base_arg)
     ld.add_action(mic_trigger_arg)
+    ld.add_action(wake_word_arg)
     ld.add_action(base_serial_launch)
     ld.add_action(llm_main_process)
     return ld
