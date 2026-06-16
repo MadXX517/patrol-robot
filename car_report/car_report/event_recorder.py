@@ -9,6 +9,12 @@ import cv2
 import rclpy
 from cv_bridge import CvBridge
 from interfaces.msg import ObjectsInfo
+from car_report.security_events import (
+    ConfirmFrameTracker,
+    class_key,
+    parse_target_classes,
+    security_event_metadata,
+)
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
@@ -42,6 +48,8 @@ class EventRecorderNode(Node):
         self.declare_parameter('save_image', True)
         self.declare_parameter('max_image_bytes', DEFAULT_MAX_IMAGE_BYTES)
         self.declare_parameter('jpeg_quality', 85)
+        self.declare_parameter('confirm_frames', 1)
+        self.declare_parameter('area_name', '通信节点外围警戒线')
 
         self.objects_topic = self.get_parameter('objects_topic').value
         self.image_topic = self.get_parameter('image_topic').value
@@ -51,7 +59,9 @@ class EventRecorderNode(Node):
         self.save_image = bool(self.get_parameter('save_image').value)
         self.max_image_bytes = max(1, int(self.get_parameter('max_image_bytes').value))
         self.jpeg_quality = max(30, min(95, int(self.get_parameter('jpeg_quality').value)))
-        self.target_classes = self._parse_target_classes(
+        self.confirm_frames = max(1, int(self.get_parameter('confirm_frames').value))
+        self.area_name = str(self.get_parameter('area_name').value or '通信节点外围警戒线')
+        self.target_classes = parse_target_classes(
             self.get_parameter('target_classes').value
         )
 
@@ -65,6 +75,7 @@ class EventRecorderNode(Node):
         self.latest_image = None
         self.latest_image_size = (0, 0)
         self.last_event_time = {}
+        self.confirm_tracker = ConfirmFrameTracker(self.confirm_frames)
 
         self.event_pub = self.create_publisher(String, '/car_report/event', 10)
         self.create_subscription(Image, self.image_topic, self.image_callback, 1)
@@ -73,7 +84,7 @@ class EventRecorderNode(Node):
         self.get_logger().info(
             'event_recorder started: objects_topic=%s image_topic=%s output_dir=%s '
             'min_score=%.2f cooldown_sec=%.2f target_classes=%s save_image=%s '
-            'max_image_bytes=%d jpeg_quality=%d'
+            'max_image_bytes=%d jpeg_quality=%d confirm_frames=%d area_name=%s'
             % (
                 self.objects_topic,
                 self.image_topic,
@@ -84,18 +95,10 @@ class EventRecorderNode(Node):
                 self.save_image,
                 self.max_image_bytes,
                 self.jpeg_quality,
+                self.confirm_frames,
+                self.area_name,
             )
         )
-
-    @staticmethod
-    def _parse_target_classes(value):
-        if value is None:
-            return set()
-        return {item.strip().lower() for item in str(value).split(',') if item.strip()}
-
-    @staticmethod
-    def _class_key(class_name):
-        return str(class_name or '').strip().lower()
 
     def image_callback(self, msg):
         try:
@@ -111,14 +114,25 @@ class EventRecorderNode(Node):
     def objects_callback(self, msg):
         now = self.get_clock().now()
         now_sec = now.nanoseconds / 1e9
+        candidates = {}
 
         for obj in msg.objects:
             class_name = obj.class_name
             score = float(obj.score)
-            if not self._should_record(class_name, score, now_sec):
+            if not self._passes_score_and_class(class_name, score):
                 continue
+            key = class_key(class_name)
+            if key not in candidates or score > float(candidates[key].score):
+                candidates[key] = obj
 
-            self.last_event_time[self._class_key(class_name)] = now_sec
+        confirmed_keys = self.confirm_tracker.update(candidates.keys())
+
+        for key, obj in candidates.items():
+            class_name = obj.class_name
+            score = float(obj.score)
+            if key not in confirmed_keys or not self._passes_cooldown(key, now_sec):
+                continue
+            self.last_event_time[class_key(class_name)] = now_sec
             event = self._build_event(obj)
             self._write_event(event)
             self.event_pub.publish(String(data=json.dumps(event, ensure_ascii=False)))
@@ -126,14 +140,16 @@ class EventRecorderNode(Node):
                 'recorded event: %s %.2f' % (event['class_name'], event['score'])
             )
 
-    def _should_record(self, class_name, score, now_sec):
-        class_key = self._class_key(class_name)
+    def _passes_score_and_class(self, class_name, score):
+        key = class_key(class_name)
         if score < self.min_score:
             return False
-        if self.target_classes and class_key not in self.target_classes:
+        if self.target_classes and key not in self.target_classes:
             return False
+        return True
 
-        last_time = self.last_event_time.get(class_key)
+    def _passes_cooldown(self, class_key_value, now_sec):
+        last_time = self.last_event_time.get(class_key_value)
         if last_time is not None and now_sec - last_time < self.cooldown_sec:
             return False
         return True
@@ -144,10 +160,15 @@ class EventRecorderNode(Node):
         width, height = self._resolve_image_size(obj)
         image_path = self._save_snapshot(obj.class_name, timestamp)
         image_bytes = os.path.getsize(image_path) if image_path else 0
+        metadata = security_event_metadata(obj.class_name)
 
-        return {
+        event = {
             'time': event_time.isoformat(timespec='seconds'),
-            'event_type': 'object_detected',
+            'event_type': metadata['event_type'],
+            'event_name': metadata['event_name'],
+            'priority': metadata['priority'],
+            'risk_level': metadata['risk_level'],
+            'area': self.area_name,
             'class_name': obj.class_name,
             'score': round(float(obj.score), 4),
             'bbox': [int(value) for value in obj.box],
@@ -157,6 +178,9 @@ class EventRecorderNode(Node):
             'image_bytes': int(image_bytes),
             'source_topic': self.objects_topic,
         }
+        event['action'] = metadata['action']
+        event['speech'] = metadata['speech']
+        return event
 
     def _resolve_image_size(self, obj):
         width, height = self.latest_image_size
