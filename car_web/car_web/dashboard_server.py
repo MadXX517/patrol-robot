@@ -16,6 +16,7 @@ from urllib.parse import unquote, urlsplit
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from action_msgs.msg import GoalStatus
+from action_msgs.srv import CancelGoal
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.action import NavigateToPose, FollowWaypoints
 from rclpy.action import ActionClient
@@ -232,6 +233,10 @@ class DashboardNode(Node):
         # 回调更新 nav_state/nav_feedback。goal handle 存下供取消。
         self.nav_action = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self._nav_goal_handle = None
+        # 取消 /navigate_to_pose 上的全部目标(含 explore_lite 自己发的,我们无 handle)。
+        # explore 停止后 bt_navigator 仍持最后 frontier 目标在跑,必须按服务端 cancel-all 清掉。
+        self._navpose_cancel_cli = self.create_client(
+            CancelGoal, '/navigate_to_pose/_action/cancel_goal')
         # FollowWaypoints action 客户端:多点巡航。车依次到访点列表,可取消。
         self.cruise_action = ActionClient(self, FollowWaypoints, '/follow_waypoints')
         self._cruise_goal_handle = None
@@ -907,6 +912,19 @@ class DashboardNode(Node):
         self.announce('开始自动建图' if explore else '开始手动建图')
         return self.status()
 
+    def _cancel_all_navpose_goals(self):
+        """取消 /navigate_to_pose 服务端的全部活动目标(空 goal_id + 零时间戳 = cancel-all)。
+        explore_lite 被杀后,它发给 bt_navigator 的最后 frontier 目标仍在执行,
+        controller_server 继续吐 /cmd_vel 把车拽回去,必须从服务端清掉,不靠本地 handle。"""
+        try:
+            if not self._navpose_cancel_cli.wait_for_service(timeout_sec=2.0):
+                self.get_logger().warn('navpose cancel service 未就绪,跳过 cancel-all')
+                return
+            req = CancelGoal.Request()  # 默认空 goal_info → 取消该 action 全部目标
+            self._navpose_cancel_cli.call_async(req)
+        except Exception as exc:
+            self.get_logger().warn('cancel-all navpose 失败: %s' % exc)
+
     def stop_explore(self):
         """只停自动探索,保留建图(可转手动继续补图)。
 
@@ -918,6 +936,10 @@ class DashboardNode(Node):
         """
         self.stop_process('explore')
         self._cleanup_explore_residual()
+        # explore 进程死了但 bt_navigator 仍在跑它发的最后目标:取消服务端全部目标,
+        # 再清零 /cmd_vel,否则手动接管会被 nav2 控制器持续拽回最后 frontier。
+        self._cancel_all_navpose_goals()
+        self.publish_stop(repeat=3)
         with self.lock:
             if self.nav_state == 'exploring':
                 self.nav_state = 'mapping'
