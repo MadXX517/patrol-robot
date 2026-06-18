@@ -97,17 +97,19 @@
 
       <div class="panel">
         <h2>遥控</h2>
-        <p class="hint compact">按住方向键才运动，松开自动停车。</p>
-        <div class="drive-pad">
-          <button class="drive empty" disabled></button>
-          <button class="drive" data-linear="0.18" data-angular="0">前进</button>
-          <button class="drive empty" disabled></button>
-          <button class="drive" data-linear="0" data-angular="0.8">左转</button>
-          <button id="stopBtn" class="drive stop">停止</button>
-          <button class="drive" data-linear="0" data-angular="-0.8">右转</button>
-          <button class="drive empty" disabled></button>
-          <button class="drive" data-linear="-0.14" data-angular="0">后退</button>
-          <button class="drive empty" disabled></button>
+        <p class="hint compact">拖动摇杆控制,松开自动停车。上下=前进/后退,左右=转向或横移。</p>
+        <div class="joystick-wrap" data-joystick>
+          <div class="joystick-modes button-row grid-two compact">
+            <button class="btn primary" data-jmode="steer">转向模式</button>
+            <button class="btn" data-jmode="strafe">横移模式</button>
+          </div>
+          <div class="joystick-pad">
+            <div class="joystick-knob"></div>
+          </div>
+          <label class="joystick-speed hint compact">
+            速度 <span data-jspeed-label>50%</span>
+            <input type="range" min="10" max="100" value="50" step="5" data-jspeed>
+          </label>
         </div>
       </div>
 
@@ -213,17 +215,19 @@
 
         <div class="panel">
           <h2>遥控建图</h2>
-          <p class="hint compact">手动建图时按住方向键开车,走遍区域把图补全。</p>
-          <div class="drive-pad">
-            <button class="drive empty" disabled></button>
-            <button class="drive" data-linear="0.18" data-angular="0">前进</button>
-            <button class="drive empty" disabled></button>
-            <button class="drive" data-linear="0" data-angular="0.8">左转</button>
-            <button class="drive stop" data-linear="0" data-angular="0">停止</button>
-            <button class="drive" data-linear="0" data-angular="-0.8">右转</button>
-            <button class="drive empty" disabled></button>
-            <button class="drive" data-linear="-0.14" data-angular="0">后退</button>
-            <button class="drive empty" disabled></button>
+          <p class="hint compact">手动建图时拖摇杆开车,走遍区域把图补全。上下=前进/后退,左右=转向或横移。</p>
+          <div class="joystick-wrap" data-joystick>
+            <div class="joystick-modes button-row grid-two compact">
+              <button class="btn primary" data-jmode="steer">转向模式</button>
+              <button class="btn" data-jmode="strafe">横移模式</button>
+            </div>
+            <div class="joystick-pad">
+              <div class="joystick-knob"></div>
+            </div>
+            <label class="joystick-speed hint compact">
+              速度 <span data-jspeed-label>50%</span>
+              <input type="range" min="10" max="100" value="50" step="5" data-jspeed>
+            </label>
           </div>
         </div>
 

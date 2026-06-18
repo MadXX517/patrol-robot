@@ -786,11 +786,12 @@ async function postPatrolCmd(cmd, label) {
   }
 }
 
-function startDrive(linear, angular) {
-  stopDriveTimer();
-  state.activeDrive = { linear, angular };
-  sendDrive();
-  state.driveTimer = setInterval(sendDrive, 160);
+function startDrive(linear, angular, lateral = 0) {
+  state.activeDrive = { linear, angular, lateral };
+  if (!state.driveTimer) {
+    sendDrive();
+    state.driveTimer = setInterval(sendDrive, 160);
+  }
 }
 
 function stopDriveTimer() {
@@ -816,10 +817,67 @@ async function stopDrive() {
   stopDriveTimer();
   state.activeDrive = null;
   try {
-    await request(api.drive, { method: 'POST', body: { linear: 0, angular: 0 } });
+    await request(api.drive, { method: 'POST', body: { linear: 0, angular: 0, lateral: 0 } });
   } catch (error) {
     setStatus(`停止失败：${error.message}`, true);
   }
+}
+
+// 麦轮摇杆:上下=前进/后退(linear.x),左右按模式=转向(angular.z)或横移(linear.y)。
+const JOY_MAX_LINEAR = 0.2;
+const JOY_MAX_ANGULAR = 1.0;
+const JOY_MAX_LATERAL = 0.2;
+
+function initJoystick(wrap) {
+  const pad = wrap.querySelector('.joystick-pad');
+  const knob = wrap.querySelector('.joystick-knob');
+  const speedInput = wrap.querySelector('[data-jspeed]');
+  const speedLabel = wrap.querySelector('[data-jspeed-label]');
+  const modeBtns = wrap.querySelectorAll('[data-jmode]');
+  const ctx = { mode: 'steer', active: false };
+
+  modeBtns.forEach((btn) => btn.addEventListener('click', () => {
+    ctx.mode = btn.dataset.jmode;
+    modeBtns.forEach((b) => b.classList.toggle('primary', b === btn));
+  }));
+  if (speedInput && speedLabel) {
+    speedInput.addEventListener('input', () => { speedLabel.textContent = `${speedInput.value}%`; });
+  }
+
+  const send = (nx, ny) => {
+    const speed = (speedInput ? Number(speedInput.value) : 50) / 100;
+    const linear = -ny * JOY_MAX_LINEAR * speed;     // 上(屏幕-y)=前进
+    const side = -nx * speed;                        // 左(屏幕-x)=左转/左移(ROS +)
+    if (ctx.mode === 'strafe') startDrive(linear, 0, side * JOY_MAX_LATERAL);
+    else startDrive(linear, side * JOY_MAX_ANGULAR, 0);
+  };
+
+  const onMove = (event) => {
+    if (!ctx.active) return;
+    const rect = pad.getBoundingClientRect();
+    const r = rect.width / 2;
+    let dx = event.clientX - (rect.left + r);
+    let dy = event.clientY - (rect.top + r);
+    const dist = Math.hypot(dx, dy);
+    if (dist > r) { dx *= r / dist; dy *= r / dist; }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    send(dx / r, dy / r);
+  };
+  const release = () => {
+    if (!ctx.active) return;
+    ctx.active = false;
+    knob.style.transform = 'translate(0, 0)';
+    stopDrive();
+  };
+  pad.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    ctx.active = true;
+    pad.setPointerCapture(event.pointerId);
+    onMove(event);
+  });
+  pad.addEventListener('pointermove', onMove);
+  pad.addEventListener('pointerup', release);
+  pad.addEventListener('pointercancel', release);
 }
 
 function escapeHtml(value) {
@@ -940,20 +998,7 @@ function bindControls() {
       postAndRefresh(on ? api.voiceAsrStop : api.voiceAsrStart);
     });
   }
-  document.getElementById('stopBtn').addEventListener('click', stopDrive);
-
-  document.querySelectorAll('.drive[data-linear]').forEach((button) => {
-    const linear = Number(button.dataset.linear);
-    const angular = Number(button.dataset.angular);
-    button.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      button.setPointerCapture(event.pointerId);
-      startDrive(linear, angular);
-    });
-    button.addEventListener('pointerup', stopDrive);
-    button.addEventListener('pointercancel', stopDrive);
-    button.addEventListener('pointerleave', stopDrive);
-  });
+  document.querySelectorAll('[data-joystick]').forEach(initJoystick);
 
   els.videoStream.addEventListener('load', () => {
     if (state.uiMode === 'nav') return;
@@ -969,7 +1014,7 @@ function bindControls() {
 
   window.addEventListener('blur', stopDrive);
   window.addEventListener('beforeunload', () => {
-    navigator.sendBeacon(api.drive, JSON.stringify({ linear: 0, angular: 0 }));
+    navigator.sendBeacon(api.drive, JSON.stringify({ linear: 0, angular: 0, lateral: 0 }));
   });
 }
 

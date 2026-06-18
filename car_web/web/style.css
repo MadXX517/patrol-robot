@@ -559,30 +559,45 @@ body.events-collapsed .events-list {
   margin-top: 12px;
 }
 
-.drive-pad {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+.joystick-wrap {
   margin-top: 12px;
 }
 
-.drive {
-  width: 100%;
-  aspect-ratio: 1.65 / 1;
-  font-weight: 600;
+.joystick-pad {
+  position: relative;
+  width: 70%;
+  max-width: 200px;
+  aspect-ratio: 1 / 1;
+  margin: 14px auto;
+  border-radius: 50%;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  border: 1px solid var(--line);
   touch-action: none;
   user-select: none;
 }
 
-.drive.empty {
-  visibility: hidden;
-  cursor: default;
+.joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 38%;
+  height: 38%;
+  margin: -19% 0 0 -19%;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: transform 0.05s linear;
+  pointer-events: none;
 }
 
-.drive.stop {
-  color: #ffffff;
-  background: var(--orange);
-  border-color: var(--orange);
+.joystick-speed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.joystick-speed input[type="range"] {
+  flex: 1;
 }
 
 .hint {

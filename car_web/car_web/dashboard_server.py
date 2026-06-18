@@ -142,6 +142,8 @@ class DashboardNode(Node):
         self.declare_parameter('drive_timeout', 0.5)
         self.declare_parameter('max_linear_speed', 0.2)
         self.declare_parameter('max_angular_speed', 1.0)
+        # 横移(麦轮 linear.y)最大速度,与前进同量级
+        self.declare_parameter('max_lateral_speed', 0.2)
         # 旋转死区下限:实测 <0.35rad/s 时电机落入 PWM 死区,四轮走停不同步,
         # 角速度瞬时在 0~0.44 间剧烈抖动,麦轮耦合成前后左右平移晃动,伤建图精度。
         # 实测拐点:0.30→抖动占比17%且仍掉到0;0.35→减半到8%且不再掉0;0.40 收益饱和。
@@ -159,6 +161,7 @@ class DashboardNode(Node):
         self.drive_timeout = max(0.1, float(self.get_parameter('drive_timeout').value))
         self.max_linear_speed = max(0.0, float(self.get_parameter('max_linear_speed').value))
         self.max_angular_speed = max(0.0, float(self.get_parameter('max_angular_speed').value))
+        self.max_lateral_speed = max(0.0, float(self.get_parameter('max_lateral_speed').value))
         self.min_angular_speed = max(0.0, float(self.get_parameter('min_angular_speed').value))
         self.voltage_scale = float(self.get_parameter('voltage_scale').value)
         self.voltage_full = float(self.get_parameter('voltage_full').value)
@@ -182,6 +185,7 @@ class DashboardNode(Node):
         self.motion_active = False
         self.target_linear = 0.0
         self.target_angular = 0.0
+        self.target_lateral = 0.0
         self.current_joints = [0.0] * len(JOINT_NAMES)
         self.have_joint_state = False
 
@@ -311,12 +315,14 @@ class DashboardNode(Node):
             if expired:
                 self.target_linear = 0.0
                 self.target_angular = 0.0
+                self.target_lateral = 0.0
                 self.motion_active = False
 
             linear = self.target_linear
             angular = self.target_angular
+            lateral = self.target_lateral
 
-        self._publish_twist(linear, angular)
+        self._publish_twist(linear, angular, lateral)
 
     def publish_robot_pose(self):
         """0.2s 一次:查 map->base_link,重发为 /robot_pose(PoseStamped),并缓存
@@ -1364,14 +1370,18 @@ class DashboardNode(Node):
 
         linear = float(payload.get('linear', 0.0))
         angular = float(payload.get('angular', 0.0))
+        lateral = float(payload.get('lateral', 0.0))
         linear = self._clamp(linear, -self.max_linear_speed, self.max_linear_speed)
         angular = self._clamp(angular, -self.max_angular_speed, self.max_angular_speed)
+        lateral = self._clamp(lateral, -self.max_lateral_speed, self.max_lateral_speed)
 
         with self.lock:
             self.target_linear = linear
             self.target_angular = angular
+            self.target_lateral = lateral
             self.last_drive_time = time.monotonic()
-            self.motion_active = abs(linear) > 1e-6 or abs(angular) > 1e-6
+            self.motion_active = (abs(linear) > 1e-6 or abs(angular) > 1e-6
+                                  or abs(lateral) > 1e-6)
 
         if not self.motion_active:
             self.publish_stop()
@@ -1380,6 +1390,7 @@ class DashboardNode(Node):
             'ok': True,
             'linear': linear,
             'angular': angular,
+            'lateral': lateral,
         }
 
     def estop(self):
@@ -1453,12 +1464,13 @@ class DashboardNode(Node):
         with self.lock:
             self.target_linear = 0.0
             self.target_angular = 0.0
+            self.target_lateral = 0.0
             self.last_drive_time = time.monotonic()
             self.motion_active = False
         for _ in range(max(1, int(repeat))):
-            self._publish_twist(0.0, 0.0)
+            self._publish_twist(0.0, 0.0, 0.0)
 
-    def _publish_twist(self, linear, angular):
+    def _publish_twist(self, linear, angular, lateral=0.0):
         angular = float(angular)
         # 旋转死区补偿:非零但低于死区下限的角速度抬到下限(保号),跨过电机静摩擦。
         # 极小值(<0.02)视为停止意图,不抬,避免松手余量被放大成持续旋转。
@@ -1466,6 +1478,7 @@ class DashboardNode(Node):
             angular = self.min_angular_speed if angular > 0 else -self.min_angular_speed
         twist = Twist()
         twist.linear.x = float(linear)
+        twist.linear.y = float(lateral)
         twist.angular.z = angular
         self.cmd_pub.publish(twist)
 
