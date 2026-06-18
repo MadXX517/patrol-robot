@@ -34,8 +34,6 @@ const api = {
   servoReset: '/api/servo/reset',
   cameraLeft: '/api/servo/camera_left',
   cameraRight: '/api/servo/camera_right',
-  cameraUp: '/api/servo/camera_up',
-  cameraDown: '/api/servo/camera_down',
   patrolRelock: '/api/patrol/relock',
   patrolCommand: '/api/patrol/command',
   patrolSpeed: '/api/patrol/speed',
@@ -84,9 +82,8 @@ const els = {
   reportJob: document.getElementById('reportJob'),
   manualBtn: document.getElementById('manualBtn'),
   coreStopBtn: document.getElementById('coreStopBtn'),
-  reportBtn: document.getElementById('reportBtn'),
-  reportStopBtn: document.getElementById('reportStopBtn'),
   allStopBtn: document.getElementById('allStopBtn'),
+  eventsToggleBtn: document.getElementById('eventsToggleBtn'),
   featureToggleBtn: document.getElementById('featureToggleBtn'),
   featureCloseBtn: document.getElementById('featureCloseBtn'),
   featurePanel: document.getElementById('featurePanel'),
@@ -101,8 +98,6 @@ const els = {
   featureStopBtn: document.getElementById('featureStopBtn'),
   cameraLeftBtn: document.getElementById('cameraLeftBtn'),
   cameraRightBtn: document.getElementById('cameraRightBtn'),
-  cameraUpBtn: document.getElementById('cameraUpBtn'),
-  cameraDownBtn: document.getElementById('cameraDownBtn'),
   chassisResetBtn: document.getElementById('chassisResetBtn'),
   servoResetBtn: document.getElementById('servoResetBtn'),
   patrolRelockBtn: document.getElementById('patrolRelockBtn'),
@@ -212,8 +207,6 @@ function updateButtons(processes) {
   const notifyRunning = processes.notify && processes.notify.running;
 
   els.coreStopBtn.disabled = !coreRunning;
-  els.reportBtn.disabled = reportRunning;
-  els.reportStopBtn.disabled = !reportRunning;
   els.notifyStartBtn.disabled = !reportRunning || notifyRunning;
   els.notifyStopBtn.disabled = !notifyRunning;
   els.reportTextBtn.disabled = !reportRunning;
@@ -222,8 +215,6 @@ function updateButtons(processes) {
   els.chassisResetBtn.disabled = !coreRunning;
   els.cameraLeftBtn.disabled = !coreRunning;
   els.cameraRightBtn.disabled = !coreRunning;
-  els.cameraUpBtn.disabled = !coreRunning;
-  els.cameraDownBtn.disabled = !coreRunning;
   els.servoResetBtn.disabled = !coreRunning;
   const followRunning = !!(processes.follow && processes.follow.running);
   [els.patrolRelockBtn, els.patrolFollowBtn, els.patrolTrackBtn, els.patrolStopBtn]
@@ -884,8 +875,6 @@ function bindControls() {
   if (els.pointSaveBtn) els.pointSaveBtn.addEventListener('click', () => savePoint());
   if (els.pointNameInput) els.pointNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') savePoint(); });
   els.coreStopBtn.addEventListener('click', () => postAndRefresh(api.coreStop));
-  els.reportBtn.addEventListener('click', () => postAndRefresh(api.report));
-  els.reportStopBtn.addEventListener('click', () => postAndRefresh(api.reportStop));
   els.allStopBtn.addEventListener('click', () => postAndRefresh(api.allStop));
   els.notifyStartBtn.addEventListener('click', () => postAndRefresh(api.notifyStart));
   els.notifyStopBtn.addEventListener('click', () => postAndRefresh(api.notifyStop));
@@ -899,6 +888,12 @@ function bindControls() {
     await loadFeatures();
   });
   els.featureCloseBtn.addEventListener('click', () => els.featurePanel.classList.add('hidden'));
+  if (els.eventsToggleBtn) {
+    els.eventsToggleBtn.addEventListener('click', () => {
+      const collapsed = els.eventsList.classList.toggle('hidden');
+      els.eventsToggleBtn.textContent = collapsed ? '展开' : '收起';
+    });
+  }
   els.featureBackBtn.addEventListener('click', showFeatureList);
   els.featureStartBtn.addEventListener('click', () => startFeature(state.selectedFeatureId));
   els.featureStopBtn.addEventListener('click', stopFeature);
@@ -916,8 +911,6 @@ function bindControls() {
   }
   els.cameraLeftBtn.addEventListener('click', () => postAction(api.cameraLeft, '摄像头左看'));
   els.cameraRightBtn.addEventListener('click', () => postAction(api.cameraRight, '摄像头右看'));
-  els.cameraUpBtn.addEventListener('click', () => postAction(api.cameraUp, '摄像头上看'));
-  els.cameraDownBtn.addEventListener('click', () => postAction(api.cameraDown, '摄像头下看'));
   els.servoResetBtn.addEventListener('click', () => postAction(api.servoReset, '云台回中'));
   if (els.patrolRelockBtn) {
     els.patrolRelockBtn.addEventListener('click', () => postAction(api.patrolRelock, '重新锁定'));

@@ -65,10 +65,8 @@
       <div class="panel">
         <h2>模式</h2>
         <div class="button-row grid-two">
-          <button id="manualBtn" class="btn primary">普通操作</button>
-          <button id="coreStopBtn" class="btn">关闭基础</button>
-          <button id="reportBtn" class="btn primary">识别记录</button>
-          <button id="reportStopBtn" class="btn">关闭识别</button>
+          <button id="manualBtn" class="btn primary">启动底盘+相机</button>
+          <button id="coreStopBtn" class="btn">关闭底盘+相机</button>
         </div>
         <div class="button-row grid-two compact">
           <button id="featureToggleBtn" class="btn">功能列表</button>
@@ -120,13 +118,9 @@
           <button id="chassisResetBtn" class="btn">底盘复位</button>
           <button id="servoResetBtn" class="btn">云台回中</button>
         </div>
-        <div class="button-row grid-three compact">
+        <div class="button-row grid-two compact">
           <button id="cameraLeftBtn" class="btn">左看</button>
-          <button id="cameraUpBtn" class="btn">上看</button>
           <button id="cameraRightBtn" class="btn">右看</button>
-        </div>
-        <div class="button-row compact">
-          <button id="cameraDownBtn" class="btn">下看</button>
         </div>
         <p class="hint compact" id="patrolState">巡逻:未运行</p>
         <p class="hint compact" id="gestureState">手势:未运行</p>
@@ -246,6 +240,7 @@
       <div class="panel-head">
         <h2>识别事件</h2>
         <span id="eventCount" class="topic">0 条</span>
+        <button id="eventsToggleBtn" class="link-button">收起</button>
       </div>
       <div id="eventsList" class="events-list"></div>
     </section>

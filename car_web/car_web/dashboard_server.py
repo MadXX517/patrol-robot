@@ -101,15 +101,9 @@ CAMERA_PITCH_MAX = 1.6
 FEATURES = [
     {
         'id': 'visual_patrol',
-        'name': '视觉巡逻',
+        'name': 'YOLO识别',
         'description': '启动 YOLO 识别、事件记录和置信框视频。',
         'available': True,
-    },
-    {
-        'id': 'line_follow',
-        'name': '自主巡线',
-        'description': '预留接口，后续接 car_vision 或 car_app 巡线。',
-        'available': False,
     },
     {
         'id': 'human_follow',
@@ -122,24 +116,6 @@ FEATURES = [
         'name': '云台追踪',
         'description': '底盘不动,仅云台锁定追踪目标人(car_patrol)。',
         'available': True,
-    },
-    {
-        'id': 'color_track',
-        'name': '颜色追踪',
-        'description': '预留接口，后续接颜色识别和追踪。',
-        'available': False,
-    },
-    {
-        'id': 'radar_control',
-        'name': '雷达控制',
-        'description': '预留接口，后续接雷达避障或导航。',
-        'available': False,
-    },
-    {
-        'id': 'voice_control',
-        'name': '语音控制',
-        'description': '预留接口，后续接 car_llm 语音控制。',
-        'available': False,
     },
 ]
 
@@ -1382,7 +1358,7 @@ class DashboardNode(Node):
             can_drive = self._is_running('core') or (
                 self.ui_mode == 'nav' and self._is_running('nav'))
         if not can_drive:
-            raise DashboardError('底盘未运行，不能遥控。请先启动普通操作,或在导航模式开始建图/加载地图。', 409)
+            raise DashboardError('底盘未运行，不能遥控。请先启动底盘+相机,或在导航模式开始建图/加载地图。', 409)
 
         linear = float(payload.get('linear', 0.0))
         angular = float(payload.get('angular', 0.0))
@@ -1450,7 +1426,7 @@ class DashboardNode(Node):
 
     def publish_camera_joints(self, updates):
         if not self._is_running('core'):
-            raise DashboardError('基础节点未运行，不能控制云台。请先启动普通操作或识别记录。', 409)
+            raise DashboardError('基础节点未运行，不能控制云台。请先启动底盘+相机或YOLO识别。', 409)
 
         with self.lock:
             if not self.have_joint_state:
