@@ -122,23 +122,32 @@
           <button id="cameraLeftBtn" class="btn">左看</button>
           <button id="cameraRightBtn" class="btn">右看</button>
         </div>
+      </div>
+
+      <div class="panel">
+        <h2>跟随控制</h2>
+        <p class="hint compact">切换运行中跟随的模式与速度。启动跟随请用上方功能中心。</p>
         <p class="hint compact" id="patrolState">巡逻:未运行</p>
-        <p class="hint compact" id="gestureState">手势:未运行</p>
+        <p class="hint compact" id="followSpeed">跟随速度:-</p>
         <div class="button-row grid-two compact">
-          <button id="gestureToggleBtn" class="btn primary">开启手势控制</button>
+          <button id="patrolFollowBtn" class="btn">切换为跟随</button>
+          <button id="patrolTrackBtn" class="btn">切换为追踪</button>
+        </div>
+        <div class="button-row grid-two compact">
           <button id="patrolRelockBtn" class="btn">重新锁定目标</button>
-        </div>
-        <div class="button-row grid-two compact">
-          <button id="patrolFollowBtn" class="btn">智能跟随</button>
-          <button id="patrolTrackBtn" class="btn">云台追踪</button>
-        </div>
-        <div class="button-row compact">
           <button id="patrolStopBtn" class="btn danger">停止跟随</button>
         </div>
-        <p class="hint compact" id="followSpeed">跟随速度:-</p>
         <div class="button-row grid-two compact">
           <button id="followSlowerBtn" class="btn">减速</button>
           <button id="followFasterBtn" class="btn">加速</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>手势控制</h2>
+        <p class="hint compact" id="gestureState">手势:未运行</p>
+        <div class="button-row compact">
+          <button id="gestureToggleBtn" class="btn primary">开启手势控制</button>
         </div>
       </div>
 
