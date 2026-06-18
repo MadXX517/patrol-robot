@@ -19,7 +19,7 @@ setup(
     zip_safe=True,
     maintainer='yeahbot',
     maintainer_email='yeahbot@todo.todo',
-    description='Visual event recording and GLM report generation for the patrol robot',
+    description='Visual event recording and LLM report generation for the patrol robot',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={

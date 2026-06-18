@@ -66,9 +66,15 @@ def should_notify(
 
 def build_markdown_payload(event, keyword):
     event_type = event.get("event_type") or "unknown"
+    event_name = event.get("event_name") or event_type
+    priority = event.get("priority") or "未记录"
+    risk_level = event.get("risk_level") or "未记录"
+    area = event.get("area") or "未记录"
     class_name = event.get("class_name") or "unknown"
     score = event_score(event)
     bbox = event.get("bbox") or []
+    action = event.get("action") or "人工复核"
+    speech = event.get("speech") or "无"
     image_path = event.get("image_path") or "无"
     image_width = event.get("image_width") or 0
     image_height = event.get("image_height") or 0
@@ -76,14 +82,20 @@ def build_markdown_payload(event, keyword):
     source_topic = event.get("source_topic") or ""
     event_time = event.get("time") or ""
 
-    title = f"{keyword} - {event_type}"
+    title = f"{keyword} - {event_name}"
     text = (
-        f"### {keyword} - {event_type}\n\n"
+        f"### {keyword} - {event_name}\n\n"
         f"- 时间：{event_time or '未知'}\n"
+        f"- 警情名称：{event_name}\n"
         f"- 事件类型：{event_type}\n"
+        f"- 风险等级：{risk_level}\n"
+        f"- 优先级：{priority}\n"
+        f"- 区域：{area}\n"
         f"- 目标：{class_name}\n"
         f"- 置信度：{format_score(score)}\n"
         f"- 位置框：{bbox}\n"
+        f"- 建议动作：{action}\n"
+        f"- 语音提示：{speech}\n"
         f"- 图像尺寸：{image_width}x{image_height}\n"
         f"- 截图大小：{image_bytes} bytes\n"
         f"- 截图路径：`{image_path}`\n"
@@ -147,10 +159,16 @@ def update_cooldown(last_sent_at, event):
 def run_webhook_test(webhook_url, keyword, timeout):
     event = {
         "time": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "event_type": "webhook_test",
+        "event_type": "intrusion_detected",
+        "event_name": "Webhook 连通测试",
+        "priority": "test",
+        "risk_level": "low",
+        "area": "local_test",
         "class_name": "test",
         "score": 1.0,
         "bbox": [],
+        "action": "验证钉钉机器人是否可达",
+        "speech": "无",
         "image_width": 0,
         "image_height": 0,
         "image_path": "无",
@@ -255,7 +273,7 @@ def run_ros_node():
             self.get_logger().info(
                 "sent dingtalk event: %s %s"
                 % (
-                    event.get("class_name") or "unknown",
+                    event.get("event_name") or event.get("class_name") or "unknown",
                     format_score(event_score(event)),
                 )
             )

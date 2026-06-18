@@ -59,6 +59,7 @@ def quaternion_to_yaw(x, y, z, w):
 RESIDUAL_PATTERNS = [
     'astra_camera_node', 'car_camera.launch', 'base_serial.launch',
     'car_web_core.launch', 'yolo_detect', 'car_report_yolo.launch',
+    'camp_security_yolo.launch',
     'person_follow', 'human_follow.launch', 'gesture_command',
     'dingtalk_notify', 'gimbal_track.launch',
 ]
@@ -1589,10 +1590,7 @@ class DashboardNode(Node):
     @staticmethod
     def report_command():
         return [
-            'ros2', 'launch', 'car_report', 'car_report_yolo.launch.py',
-            'yolo_pub_result_img:=true',
-            'yolo_conf_thres:=0.5',
-            'min_score:=0.5'
+            'ros2', 'launch', 'car_report', 'camp_security_yolo.launch.py',
         ]
 
     @staticmethod

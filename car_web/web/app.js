@@ -724,18 +724,25 @@ function renderEvents(events) {
   }
 
   els.eventsList.innerHTML = events.map((event) => {
-    const name = event.class_name || event.event_type || '事件';
+    const name = event.event_name || event.class_name || event.event_type || '事件';
+    const target = event.class_name ? `目标: ${event.class_name}` : '';
+    const risk = event.risk_level ? `风险: ${event.risk_level}` : '';
+    const area = event.area ? `区域: ${event.area}` : '';
+    const action = event.action ? `建议: ${event.action}` : '';
     const score = typeof event.score === 'number' ? event.score.toFixed(2) : '未记录';
     const time = event.time || '';
     const image = event.image_path || '无截图';
     const bbox = Array.isArray(event.bbox) ? event.bbox.join(', ') : '无';
+    const tags = [target, risk, area].filter(Boolean).join(' | ');
     return `
       <div class="event-item">
         <div class="event-main">
           <strong>${escapeHtml(name)}</strong>
           <span>${escapeHtml(score)}</span>
         </div>
+        ${tags ? `<div class="event-meta">${escapeHtml(tags)}</div>` : ''}
         <div class="event-meta">${escapeHtml(time)} | bbox: ${escapeHtml(bbox)}</div>
+        ${action ? `<div class="event-meta">${escapeHtml(action)}</div>` : ''}
         <div class="event-meta">${escapeHtml(image)}</div>
       </div>
     `;

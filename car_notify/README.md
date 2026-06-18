@@ -13,7 +13,7 @@
 
 ## 做什么
 
-`car_notify` 不做识别、不做事件记录，也不生成 GLM 报告。它只负责把 `car_report` 已经发布出来的事件推送到钉钉群。
+`car_notify` 不做识别、不做事件记录，也不生成 LLM 报告。它只负责把 `car_report` 已经发布出来的事件推送到钉钉群。
 
 - 订阅 `/car_report/event`。
 - 解析 `car_report` 事件 JSON。
@@ -32,7 +32,7 @@
 事件字段沿用 `car_report`：
 
 ```json
-{"time":"2026-05-11T21:30:12+08:00","event_type":"object_detected","class_name":"person","score":0.87,"bbox":[120,80,300,420],"image_width":640,"image_height":480,"image_path":"car_report/data/events/images/test.jpg","image_bytes":123456,"source_topic":"/car_yolo/object_detect"}
+{"time":"2026-05-11T21:30:12+08:00","event_type":"intrusion_detected","event_name":"核心禁区人员闯入","priority":"highest","risk_level":"high","area":"通信节点外围警戒线","class_name":"person","score":0.87,"bbox":[120,80,300,420],"image_width":640,"image_height":480,"image_path":"car_report/data/events/images/test.jpg","image_bytes":123456,"source_topic":"/car_yolo/object_detect","action":"停车、语音警告、截图留证、上报值班终端","speech":"警告，您已进入军事通信设施警戒区域，请立即停止前进并配合检查。"}
 ```
 
 ## 输出
@@ -40,8 +40,8 @@
 输出到钉钉自定义机器人 webhook，消息类型为 markdown：
 
 - `msgtype`: `markdown`
-- `markdown.title`: 包含关键词，例如 `巡逻告警 - object_detected`
-- `markdown.text`: 包含关键词、时间、事件类型、目标、置信度、位置框、图像尺寸、截图大小、截图本地路径、来源话题和人工复核提示；没有置信度的事件显示 `未记录`
+- `markdown.title`: 包含关键词，例如 `巡逻告警 - 核心禁区人员闯入`
+- `markdown.text`: 包含关键词、时间、警情名称、风险等级、区域、建议动作、语音提示、目标、置信度、位置框、截图路径、来源话题和人工复核提示；没有置信度的事件显示 `未记录`
 
 v1 不上传图片。钉钉 webhook 的 markdown 不能直接发送本地文件，当前只推送截图路径；后续如果接入图床、内网 Web 服务或文件服务，再把路径改成可访问链接。
 
