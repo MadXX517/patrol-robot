@@ -39,6 +39,88 @@ body {
   gap: 16px;
 }
 
+/* 顶层两大模式切换器 */
+.mode-switch {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mode-tab {
+  padding: 8px 18px;
+  border: none;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-tab.active {
+  background: #2b6cb0;
+  color: #fff;
+}
+
+/* 面板组:display:contents 让 wrapper 不破坏 control-panel 的 flex gap 布局;
+   隐藏时整组消失 */
+.panel-group {
+  display: contents;
+}
+
+.panel-group.hidden {
+  display: none;
+}
+
+/* 导航地图画布:填满 video-frame,与视频流互斥显示 */
+.nav-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #1a1d23;
+  cursor: crosshair;
+}
+
+.nav-canvas.hidden {
+  display: none;
+}
+
+.text-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: inherit;
+  font-size: 14px;
+}
+
+.map-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.map-item {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.map-item.active {
+  background: #2b6cb0;
+  color: #fff;
+  border-color: #2b6cb0;
+}
+
 h1,
 h2,
 p {
@@ -132,14 +214,16 @@ h3 {
 .layout {
   width: 100%;
   max-width: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
   padding: 16px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
   grid-template-areas:
     "video control"
     "events control";
+  grid-template-rows: minmax(0, 1fr) minmax(150px, 240px);
   gap: 16px;
+  height: calc(100vh - 92px);   /* 减去顶栏,左列固定不滚 */
 }
 
 .video-panel,
@@ -153,11 +237,16 @@ h3 {
 
 .video-panel {
   grid-area: video;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .control-panel {
   grid-area: control;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;     /* 右功能栏在网格轨道内独立滚动 */
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -165,7 +254,7 @@ h3 {
 
 .events-panel {
   grid-area: events;
-  min-height: 220px;
+  min-height: 0;
 }
 
 .panel,
@@ -209,6 +298,16 @@ h3 {
   text-align: right;
 }
 
+.stream-select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .topic,
 .video-hint,
 .video-link {
@@ -229,8 +328,8 @@ h3 {
 .video-frame {
   position: relative;
   background: #111827;
-  aspect-ratio: 16 / 9;
-  min-height: 260px;
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -261,6 +360,15 @@ h3 {
 
 .hidden {
   display: none;
+}
+
+/* 建图导航模式:无事件栏,视频/地图占满左列全高 */
+body.nav-ui .events-panel {
+  display: none;
+}
+body.nav-ui .layout {
+  grid-template-areas: "video control";
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .btn,
@@ -463,7 +571,10 @@ h3 {
       "video"
       "control"
       "events";
+    grid-template-rows: auto;   /* 窄屏:还原自动行高,勿继承桌面两行轨道 */
     gap: 10px;
+    height: auto;        /* 窄屏:还原整页滚动 */
+    overflow: visible;
   }
 
   .panel-head {
@@ -475,6 +586,7 @@ h3 {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 10px;
+    overflow-y: visible; /* 窄屏不在面板内单独滚 */
   }
 
   .video-meta {
@@ -484,7 +596,8 @@ h3 {
   }
 
   .video-frame {
-    min-height: 0;
+    aspect-ratio: 16 / 9;   /* 窄屏整页滚动,用宽高比给出高度 */
+    min-height: 220px;
   }
 
   .grid-two {

@@ -2,6 +2,7 @@
 # encoding: utf-8
 import json
 import mimetypes
+import math
 import os
 from pathlib import Path
 import signal
@@ -14,10 +15,11 @@ from urllib.parse import unquote, urlsplit
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, String
+import tf2_ros
 
 
 CAMERA_TOPIC = '/camera/color/image_raw'
@@ -31,6 +33,21 @@ PERSON_FOLLOW_RESULT_TOPIC = '/person_follow/result_img'
 GESTURE_RESULT_TOPIC = '/gesture_command/result_img'
 GESTURE_STATE_TOPIC = '/gesture_command/gesture'
 PATROL_CMD_TOPIC = '/patrol/command'
+ROBOT_POSE_TOPIC = '/robot_pose'   # dashboard 由 TF(map->base_link)重发,供网页画机器人
+MAP_FRAME = 'map'
+BASE_FRAME = 'base_link'
+MAPS_DIR = os.path.expanduser('~/maps')   # 地图存放目录(map_saver_cli 输出 .pgm+.yaml)
+
+
+def yaw_to_quaternion(yaw):
+    """平面偏航角 -> 四元数 (x,y,z,w)。"""
+    return (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
+
+
+def quaternion_to_yaw(x, y, z, w):
+    """四元数 -> 平面偏航角(弧度)。"""
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
 
 # 兜底清理用的进程特征(按 launch/可执行名匹配进程组)。dashboard 自身命令行是
 # `ros2 run car_web dashboard_server`,不含下列任一特征,绝不会误杀自己。
@@ -42,6 +59,16 @@ RESIDUAL_PATTERNS = [
     'dingtalk_notify', 'gimbal_track.launch',
 ]
 LIDAR_PATTERNS = ['car_lidar.launch', 'rplidar', 'scan_angle_filter']
+VOICE_PATTERNS = ['voice_main', 'car_voice', 'voice.launch']
+# 建图导航相关进程特征。nav 启动会经 car_base.launch 拉起底盘/雷达/相机/EKF,
+# 故清理时连同 LIDAR_PATTERNS 一起;rosbridge/explore 为导航模式专属。
+NAV_PATTERNS = [
+    'car_nav2.launch', 'cartographer_node', 'cartographer_occupancy_grid',
+    'controller_server', 'planner_server', 'smoother_server', 'behavior_server',
+    'bt_navigator', 'waypoint_follower', 'lifecycle_manager', 'map_server',
+    'amcl', 'explore', 'rosbridge_websocket', 'imu_filter_madgwick',
+    'ekf_node', 'robot_state_publisher', 'car_base_node',
+]
 PATROL_STATE_TOPIC = '/person_follow/state'
 POWER_VOLTAGE_TOPIC = '/PowerVoltage'
 JOINT_NAMES = ['joint0', 'joint1', 'joint2', 'joint3', 'joint4', 'joint5']
@@ -136,6 +163,11 @@ class DashboardNode(Node):
         self.declare_parameter('drive_timeout', 0.5)
         self.declare_parameter('max_linear_speed', 0.2)
         self.declare_parameter('max_angular_speed', 1.0)
+        # 旋转死区下限:实测 <0.35rad/s 时电机落入 PWM 死区,四轮走停不同步,
+        # 角速度瞬时在 0~0.44 间剧烈抖动,麦轮耦合成前后左右平移晃动,伤建图精度。
+        # 实测拐点:0.30→抖动占比17%且仍掉到0;0.35→减半到8%且不再掉0;0.40 收益饱和。
+        # 故取 0.35。仅作用于 dashboard 遥控(_publish_twist),不碰 nav2 控制器,不影响导航对准精度。
+        self.declare_parameter('min_angular_speed', 0.35)
         # 电量:/PowerVoltage 为串口单字节 ADC 值,线性过原点标定。
         # 实测:万用表 11.06V 对应原始值≈62 -> scale≈0.178(原始字节本身有 ±2 噪声)。
         # full/empty 为 3 串锂电满/空电压(伏特),用于估算百分比。
@@ -148,6 +180,7 @@ class DashboardNode(Node):
         self.drive_timeout = max(0.1, float(self.get_parameter('drive_timeout').value))
         self.max_linear_speed = max(0.0, float(self.get_parameter('max_linear_speed').value))
         self.max_angular_speed = max(0.0, float(self.get_parameter('max_angular_speed').value))
+        self.min_angular_speed = max(0.0, float(self.get_parameter('min_angular_speed').value))
         self.voltage_scale = float(self.get_parameter('voltage_scale').value)
         self.voltage_full = float(self.get_parameter('voltage_full').value)
         self.voltage_empty = float(self.get_parameter('voltage_empty').value)
@@ -158,6 +191,10 @@ class DashboardNode(Node):
         self.lock = threading.RLock()
         self.processes = {}
         self.current_mode = 'idle'
+        self.ui_mode = 'follow'           # 'follow'(跟随/巡检) | 'nav'(建图导航),两大模式互斥
+        self.nav_state = 'idle'           # idle|mapping|exploring|localizing|navigating|cruising
+        self.nav_feedback = ''            # 导航反馈(距目标/状态文字)
+        self.current_map = ''             # 当前加载/在建的地图名
         self.current_video_topic = CAMERA_TOPIC
         self.active_feature = ''
         self.last_error = ''
@@ -174,16 +211,38 @@ class DashboardNode(Node):
         self.gesture_state = ''
         self.gesture_on = False           # 手势控制为独立叠加开关,不占 active_feature
         self.lidar_on = False             # 雷达独立开关(供 follow 避障)
+        self.tts_on = False               # 语音播报开关
+        self.asr_on = False               # 语音触发(麦克风聆听)开关
+        # 播报去抖状态
+        self._last_announce = {}          # key -> 单调时间戳
+        self._battery_warned = False      # 电量低只播一次,回升复位
+        self._prev_patrol_state = ''      # 巡逻/跟随状态沿变化检测
+        self._prev_gesture_state = ''
 
         self.cmd_pub = self.create_publisher(Twist, CMD_VEL_TOPIC, 5)
         self.servo_pub = self.create_publisher(JointState, IK_TOPIC, 5)
         self.patrol_cmd_pub = self.create_publisher(String, PATROL_CMD_TOPIC, 5)
+        self.voice_announce_pub = self.create_publisher(String, '/voice/announce', 10)
+        self.voice_control_pub = self.create_publisher(String, '/voice/control', 5)
         self.create_subscription(String, EVENT_TOPIC, self.event_callback, 20)
         self.create_subscription(JointState, JOINT_STATES_TOPIC, self.joint_state_callback, 10)
         self.create_subscription(String, PATROL_STATE_TOPIC, self.patrol_state_callback, 5)
         self.create_subscription(Float32, POWER_VOLTAGE_TOPIC, self.battery_callback, 10)
         self.create_subscription(String, GESTURE_STATE_TOPIC, self.gesture_state_callback, 5)
         self.create_timer(0.1, self.drive_timer_callback)
+
+        # TF -> /robot_pose 重发:网页画机器人需要 map 系下位姿,但建图时位姿只在 TF。
+        # 仅 nav 模式下查 map->base_link,失败静默(follow 模式无 map 帧)。
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.robot_pose_pub = self.create_publisher(PoseStamped, ROBOT_POSE_TOPIC, 5)
+        # amcl 初始位姿:加载地图进定位时,把建图最后的车位姿发给 amcl,
+        # 否则 amcl 锚在地图原点(0,0,0),车不在原点就定位错位。
+        self.initialpose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, '/initialpose', 5)
+        self.last_robot_pose = None       # (x, y, yaw) in map frame, 供回起点/打点用
+        self.home_pose = None             # 进建图那刻记录的起点 (x, y, yaw)
+        self.create_timer(0.2, self.publish_robot_pose)
 
         self.http_server = ThreadingHTTPServer(
             (self.http_host, self.http_port),
@@ -217,6 +276,14 @@ class DashboardNode(Node):
         with self.lock:
             self.events.append(parsed)
             self.events = self.events[-50:]
+
+        # 识别事件播报(同类 8 秒去抖,标签作 key)
+        label = ''
+        if isinstance(parsed, dict):
+            label = str(parsed.get('label') or parsed.get('class')
+                        or parsed.get('name') or '').strip()
+        if label:
+            self.announce('检测到%s' % label, key='event:%s' % label, min_interval=8.0)
 
     def joint_state_callback(self, msg):
         positions = list(msg.position)
@@ -255,11 +322,70 @@ class DashboardNode(Node):
 
         self._publish_twist(linear, angular)
 
+    def publish_robot_pose(self):
+        """0.2s 一次:查 map->base_link,重发为 /robot_pose(PoseStamped),并缓存
+        last_robot_pose。仅 nav 模式查(其他模式无 map 帧,查必失败)。"""
+        with self.lock:
+            if self.ui_mode != 'nav':
+                return
+        try:
+            t = self.tf_buffer.lookup_transform(
+                MAP_FRAME, BASE_FRAME, rclpy.time.Time())
+        except Exception:
+            return
+        tr = t.transform.translation
+        q = t.transform.rotation
+        yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
+        with self.lock:
+            self.last_robot_pose = (tr.x, tr.y, yaw)
+        msg = PoseStamped()
+        msg.header.stamp = t.header.stamp
+        msg.header.frame_id = MAP_FRAME
+        msg.pose.position.x = tr.x
+        msg.pose.position.y = tr.y
+        msg.pose.orientation = q
+        self.robot_pose_pub.publish(msg)
+
+    def _publish_initialpose_async(self, pose):
+        """后台线程:等 amcl 的 /initialpose 订阅连上再发(避免刚启动 discovery
+        竞态丢消息),连发几次。pose=(x,y,yaw)。amcl 收到后重置粒子滤波到此位姿,
+        发出正确的 map->odom 修正,车无需移动即已正确定位。"""
+        x, y, yaw = pose
+        qx, qy, qz, qw = yaw_to_quaternion(yaw)
+        msg = PoseWithCovarianceStamped()
+        msg.header.frame_id = MAP_FRAME
+        msg.pose.pose.position.x = x
+        msg.pose.pose.position.y = y
+        msg.pose.pose.orientation.x = qx
+        msg.pose.pose.orientation.y = qy
+        msg.pose.pose.orientation.z = qz
+        msg.pose.pose.orientation.w = qw
+        # 中等不确定度,让 amcl 用扫描微调
+        msg.pose.covariance[0] = 0.25    # x
+        msg.pose.covariance[7] = 0.25    # y
+        msg.pose.covariance[35] = 0.068  # yaw (~15°)
+        # 等订阅者(amcl)连上,最多 20s(amcl 起身较慢)
+        deadline = time.monotonic() + 20.0
+        while self.initialpose_pub.get_subscription_count() < 1:
+            if time.monotonic() > deadline:
+                self.get_logger().warn('initialpose: amcl 未在20s内订阅,放弃自动定位')
+                return
+            time.sleep(0.3)
+        # 连上后稍等并连发 3 次确保被接收
+        time.sleep(0.5)
+        for _ in range(3):
+            msg.header.stamp = self.get_clock().now().to_msg()
+            self.initialpose_pub.publish(msg)
+            time.sleep(0.4)
+        self.get_logger().info(
+            'initialpose 已发: x=%.3f y=%.3f yaw=%.1f°' % (x, y, math.degrees(yaw)))
+
     def status(self):
         with self.lock:
             processes = {
                 name: self._process_state(name)
-                for name in ('core', 'report', 'notify', 'follow', 'gesture', 'lidar')
+                for name in ('core', 'report', 'notify', 'follow', 'gesture', 'lidar',
+                             'nav', 'rosbridge', 'explore')
             }
             report_job = dict(self.report_job) if self.report_job else None
             core_running = self._is_running('core')
@@ -272,6 +398,10 @@ class DashboardNode(Node):
             return {
                 'ok': True,
                 'mode': self.current_mode,
+                'ui_mode': self.ui_mode,
+                'nav_state': self.nav_state,
+                'nav_feedback': self.nav_feedback,
+                'current_map': self.current_map,
                 'active_feature': self.active_feature,
                 'video_topic': current_video_topic,
                 'video_url': self.video_url(current_video_topic),
@@ -289,6 +419,8 @@ class DashboardNode(Node):
                 'gesture_state': self.gesture_state,
                 'gesture_on': self.gesture_on,
                 'lidar_on': self.lidar_on,
+                'tts_on': self.tts_on,
+                'asr_on': self.asr_on,
                 'battery': self.battery_info(),
             }
 
@@ -392,6 +524,21 @@ class DashboardNode(Node):
         msg.data = str(cmd)
         self.patrol_cmd_pub.publish(msg)
 
+    def patrol_speed(self, payload):
+        """跟随调速:payload {action:'up'|'down'|'normal'} 或 {value:0.x}。
+        转成 person_follow 的 speed_* / speed_set: 命令。"""
+        payload = payload or {}
+        value = payload.get('value')
+        if value is not None:
+            self.publish_patrol_command('speed_set:%s' % value)
+            return {'ok': True, 'cmd': 'speed_set:%s' % value}
+        action = str(payload.get('action', '')).strip().lower()
+        cmd = {'up': 'speed_up', 'down': 'speed_down', 'normal': 'speed_normal'}.get(action)
+        if not cmd:
+            raise DashboardError('speed 参数无效(需 action=up/down/normal 或 value)。', 400)
+        self.publish_patrol_command(cmd)
+        return {'ok': True, 'cmd': cmd}
+
     def start_lidar(self):
         """冷启动雷达(rplidar + scan_angle_filter)。供人体跟随避障用。"""
         self.start_process('lidar', self.lidar_command())
@@ -427,15 +574,144 @@ class DashboardNode(Node):
     def patrol_state_callback(self, msg):
         with self.lock:
             self.patrol_state = msg.data
+        self._announce_patrol_transition(msg.data)
 
     def gesture_state_callback(self, msg):
         with self.lock:
             self.gesture_state = msg.data
+        self._announce_gesture_transition(msg.data)
+
+    # ===================== 语音播报 / 语音触发 =====================
+    def announce(self, text, key=None, min_interval=0.0):
+        """发布一句播报到 /voice/announce(voice 节点决定是否真的出声)。
+        key+min_interval 用于去抖:同 key 在间隔内只播一次。"""
+        text = (text or '').strip()
+        if not text:
+            return
+        if key is not None and min_interval > 0:
+            now = time.monotonic()
+            last = self._last_announce.get(key, 0.0)
+            if now - last < min_interval:
+                return
+            self._last_announce[key] = now
+        msg = String()
+        msg.data = text
+        self.voice_announce_pub.publish(msg)
+
+    def _publish_voice_control(self, cmd):
+        msg = String()
+        msg.data = cmd
+        self.voice_control_pub.publish(msg)
+
+    def start_voice(self):
+        """拉起 car_voice 语音助手进程(若未在跑),默认播报+触发都开。"""
+        if not self._is_running('voice'):
+            self.start_process('voice', self.voice_command())
+        with self.lock:
+            self.tts_on = True
+            self.asr_on = True
+        return self.status()
+
+    def stop_voice(self):
+        self.stop_process('voice')
+        self.force_cleanup_residuals_voice_only()
+        with self.lock:
+            self.tts_on = False
+            self.asr_on = False
+        return self.status()
+
+    def force_cleanup_residuals_voice_only(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for pat in VOICE_PATTERNS:
+                cpat = '[' + pat[0] + ']' + pat[1:]
+                try:
+                    out = subprocess.run(['pgrep', '-f', cpat],
+                                         capture_output=True, text=True, timeout=3)
+                except Exception:
+                    continue
+                for pid_s in out.stdout.split():
+                    try:
+                        os.killpg(os.getpgid(int(pid_s)), sig)
+                    except (ProcessLookupError, ValueError, PermissionError):
+                        pass
+            if sig == signal.SIGTERM:
+                time.sleep(1.5)
+
+    def set_voice_toggle(self, which, on):
+        """which: 'tts'(播报) 或 'asr'(触发)。进程未跑时先拉起。
+        先更新权威状态再拉起进程,使新进程开机自查 /api/status 时读到正确开关。"""
+        with self.lock:
+            if which == 'tts':
+                self.tts_on = on
+            elif which == 'asr':
+                self.asr_on = on
+            stop_proc = (not self.tts_on and not self.asr_on)
+        running = self._is_running('voice')
+        if on and not running:
+            self.start_process('voice', self.voice_command())
+        elif running:
+            # 进程已在跑:发实时开关信号(订阅已就绪,无竞态)
+            self._publish_voice_control('%s_%s' % (which, 'on' if on else 'off'))
+        if stop_proc:
+            self.stop_process('voice')
+        return self.status()
+
+    def _announce_patrol_transition(self, state):
+        """巡逻/跟随状态沿变化时播报。
+        去抖用**稳定相位**(running+mode+locked+target_present)比较,而非整条 JSON
+        ——JSON 含 front_min/box 每 0.5s 都变,直接比串会每 2s 重播一次。"""
+        try:
+            s = json.loads(state) if state else {}
+        except (ValueError, TypeError):
+            s = {}
+        if not s:
+            return
+        running = bool(s.get('running'))
+        mode = s.get('mode')
+        locked = bool(s.get('locked'))
+        present = bool(s.get('target_present'))
+        phase = '%s|%s|%s|%s' % (running, mode, locked, present)
+        prev = self._prev_patrol_state
+        self._prev_patrol_state = phase
+        if phase == prev:
+            return
+        # 按稳定字段决定播报,running 优先(停止时 mode 仍可能是 follow)
+        if not running:
+            text = '已停止'
+        elif mode == 'track_only':
+            text = '切换到云台追踪'
+        elif locked and present:
+            text = '已锁定目标，开始跟随你' if mode == 'follow' else '已锁定目标'
+        else:
+            text = '目标丢失，正在重新锁定'
+        self.announce(text, key='patrol', min_interval=2.0)
+
+    def _announce_gesture_transition(self, state):
+        prev = self._prev_gesture_state
+        self._prev_gesture_state = state or ''
+        if not state or state == prev:
+            return
+        low = str(state).lower()
+        if 'wake' in low or '唤醒' in state:
+            self.announce('手势已唤醒', key='gesture', min_interval=1.5)
+        elif 'follow' in low or '跟随' in state:
+            self.announce('收到手势指令，开始跟随', key='gesture', min_interval=1.5)
 
     def battery_callback(self, msg):
         with self.lock:
             self.battery_raw = float(msg.data)
             self.battery_stamp = time.monotonic()
+            voltage = self.battery_raw * self.voltage_scale
+            full = self.voltage_full
+            empty = self.voltage_empty
+        # 电量低告警:跌破阈值播一次,回升 1V 以上复位
+        if full > empty:
+            pct = (voltage - empty) / (full - empty) * 100.0
+            if pct <= 15 and not self._battery_warned:
+                self._battery_warned = True
+                self.announce('电量不足，请及时充电')
+            elif pct >= 25:
+                self._battery_warned = False
 
     def battery_info(self):
         with self.lock:
@@ -490,6 +766,7 @@ class DashboardNode(Node):
             self.current_mode = 'report'
             self.current_video_topic = RESULT_TOPIC
             self.active_feature = 'visual_patrol'
+        self.announce('巡逻已开启')
         return self.status()
 
     def start_core(self):
@@ -531,13 +808,201 @@ class DashboardNode(Node):
         return self.status()
 
     def stop_all(self):
+        self.announce('已全部停止')
         result = self.stop_core()
-        # 兜底:清掉任何句柄外的残留(孤儿/上次实例起的),含雷达
+        # 兜底:清掉任何句柄外的残留(孤儿/上次实例起的),含雷达与导航栈
         self.stop_process('lidar')
-        self.force_cleanup_residuals(include_lidar=True)
+        self.stop_process('explore')
+        self.stop_process('nav')
+        self.stop_process('rosbridge')
+        self.force_cleanup_residuals(include_lidar=True, include_nav=True)
         with self.lock:
             self.lidar_on = False
+            self.nav_state = 'idle'
+            self.nav_feedback = ''
         return result
+
+    def set_ui_mode(self, mode):
+        """切换两大顶层模式。互斥:nav 与 follow 抢 /cmd_vel,切换前先停掉对方所有
+        /cmd_vel owner。本阶段只做编排骨架;nav 子进程在后续阶段接入。"""
+        mode = 'nav' if str(mode) == 'nav' else 'follow'
+        with self.lock:
+            cur = self.ui_mode
+        if mode == cur:
+            return self.status()
+        if mode == 'nav':
+            # 进 nav:停跟随系(follow/gesture)+core(其 car_base 会与 nav 的 car_base 抢串口),
+            # 清零 /cmd_vel,起 rosbridge。nav 模式看地图画布,不需 web_video。
+            self.publish_patrol_command('stop')
+            self.stop_process('follow')
+            self.stop_process('gesture')
+            self.stop_process('report')
+            self.stop_process('notify')
+            self.stop_process('lidar')
+            self.publish_stop(repeat=5)
+            self.stop_process('core')
+            # core 的 base_serial 与 nav 的 car_base 都开底盘串口,必须确保 core 完全退出
+            self.force_cleanup_residuals(include_lidar=True)
+            with self.lock:
+                self.gesture_on = False
+                self.lidar_on = False
+                self.active_feature = ''
+                self.ui_mode = 'nav'
+                self.current_mode = 'nav'
+            self.start_process('rosbridge', self.rosbridge_command())
+        else:
+            # 回 follow:停整个导航栈,清零 /cmd_vel,重启 core 恢复视频/遥控
+            self.stop_nav()
+            with self.lock:
+                self.ui_mode = 'follow'
+                self.current_mode = 'idle'   # 复位,让 start_core 提升为 manual
+            self.start_core()
+        return self.status()
+
+    def stop_nav(self):
+        """停建图/导航全栈(nav/explore/rosbridge)并清残留,/cmd_vel 清零。"""
+        self.stop_process('explore')
+        self.stop_process('nav')
+        self.stop_process('rosbridge')
+        self.publish_stop(repeat=5)
+        self.force_cleanup_residuals(include_nav=True)
+        with self.lock:
+            self.nav_state = 'idle'
+            self.nav_feedback = ''
+        return self.status()
+
+    def _require_nav_mode(self):
+        with self.lock:
+            if self.ui_mode != 'nav':
+                raise DashboardError('请先切到"建图导航"模式。', 409)
+
+    def start_mapping(self, explore=False):
+        """开始建图:起 cartographer(carto_slam:=true)。explore=True 再叠加
+        explore_lite 自动前沿探索;否则等用户遥控开车手动建图。"""
+        self._require_nav_mode()
+        if self._is_running('nav'):
+            raise DashboardError('导航栈已在运行,请先停止再建图。', 409)
+        self.start_process('nav', self.nav_command(carto_slam=True))
+        with self.lock:
+            self.nav_state = 'exploring' if explore else 'mapping'
+            self.current_map = ''
+            self.home_pose = None
+        if explore:
+            # 给 cartographer/nav2 起身时间(也覆盖 car_base 陀螺静止标定窗口)
+            time.sleep(8.0)
+            # 先原地转一圈扫全周建初始图:车面对墙时正前 180° 雷达只看到墙,
+            # 不转身则身后大片开阔区始终是"未知"且雷达(后半被滤)看不到,
+            # explore 会误判"无前沿"提前停。转一圈让前向雷达扫遍四周,喂出真前沿。
+            self.announce('原地扫描建初始图')
+            self._spin_in_place(angular_speed=0.4, revolutions=1.0)
+            time.sleep(1.0)
+            self.start_process('explore', self.explore_command())
+        self.announce('开始自动建图' if explore else '开始手动建图')
+        return self.status()
+
+    def stop_explore(self):
+        """只停自动探索,保留建图(可转手动继续补图)。"""
+        self.stop_process('explore')
+        self.force_cleanup_residuals(include_nav=False)  # explore 在 RESIDUAL? 否,单独清
+        self._cleanup_explore_residual()
+        with self.lock:
+            if self.nav_state == 'exploring':
+                self.nav_state = 'mapping'
+        return self.status()
+
+    def _cleanup_explore_residual(self):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                out = subprocess.run(['pgrep', '-f', '[e]xplore'],
+                                     capture_output=True, text=True, timeout=3)
+            except Exception:
+                break
+            for pid_s in out.stdout.split():
+                try:
+                    os.killpg(os.getpgid(int(pid_s)), sig)
+                except (ProcessLookupError, ValueError, PermissionError):
+                    pass
+            if sig == signal.SIGTERM:
+                time.sleep(1.5)
+
+    def save_map(self, payload):
+        """用 map_saver_cli 把当前 /map 存成 ~/maps/<name>.{pgm,yaml}。"""
+        self._require_nav_mode()
+        if not self._is_running('nav'):
+            raise DashboardError('未在建图,无法保存地图。', 409)
+        name = self._safe_map_name(payload.get('name', ''))
+        os.makedirs(MAPS_DIR, exist_ok=True)
+        stem = os.path.join(MAPS_DIR, name)
+        try:
+            res = subprocess.run(
+                ['ros2', 'run', 'nav2_map_server', 'map_saver_cli',
+                 '-f', stem, '--ros-args', '-p', 'save_map_timeout:=10.0'],
+                capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            raise DashboardError('保存地图超时(10s 内未收到 /map)。', 504)
+        if not os.path.exists(stem + '.yaml'):
+            raise DashboardError('保存失败:%s' % (res.stderr or res.stdout)[-200:], 500)
+        with self.lock:
+            self.current_map = name
+        self.announce('地图已保存:%s' % name)
+        return {'ok': True, 'name': name, 'maps': self._list_map_names()}
+
+    @staticmethod
+    def _safe_map_name(name):
+        name = str(name or '').strip()
+        if not name:
+            name = 'map'
+        # 只留字母数字下划线连字符中文,挡路径穿越
+        keep = []
+        for ch in name:
+            if ch.isalnum() or ch in '_-' or '一' <= ch <= '鿿':
+                keep.append(ch)
+        cleaned = ''.join(keep)[:40]
+        return cleaned or 'map'
+
+    @staticmethod
+    def _list_map_names():
+        try:
+            files = os.listdir(MAPS_DIR)
+        except OSError:
+            return []
+        return sorted(f[:-5] for f in files if f.endswith('.yaml'))
+
+    def list_maps(self):
+        return {'ok': True, 'maps': self._list_map_names(), 'current_map': self.current_map}
+
+    def load_map(self, payload):
+        """加载已存地图进入定位导航(slam:=False map:=<yaml>)。
+
+        若当前正建图(cartographer 在跑),停它前先抓车在 map 中的当前位姿,
+        amcl 起来后自动补发为 /initialpose,使车无缝定位(否则 amcl 锚在原点)。
+        冷加载(无 last_robot_pose)时跳过,沿用 amcl 默认原点,待用户手动设位姿。"""
+        self._require_nav_mode()
+        name = self._safe_map_name(payload.get('name', ''))
+        yaml_path = os.path.join(MAPS_DIR, name + '.yaml')
+        if not os.path.exists(yaml_path):
+            raise DashboardError('地图不存在:%s' % name, 404)
+        # 停栈前抓当前位姿(建图连续流程下=车真实所在;加载同一张图坐标系一致)
+        with self.lock:
+            seed_pose = self.last_robot_pose
+        self.stop_process('explore')
+        self.stop_process('nav')
+        self._cleanup_explore_residual()
+        self.force_cleanup_residuals(include_nav=True)
+        time.sleep(1.0)
+        self.start_process('nav', self.nav_command(carto_slam=False, map_path=yaml_path))
+        with self.lock:
+            self.nav_state = 'localizing'
+            self.current_map = name
+            self.home_pose = None
+        if seed_pose is not None:
+            # 后台等 amcl 订阅连上再发,不阻塞 HTTP 响应
+            threading.Thread(target=self._publish_initialpose_async,
+                             args=(seed_pose,), daemon=True).start()
+            self.announce('已加载地图:%s,正在定位' % name)
+        else:
+            self.announce('已加载地图:%s(请在地图上点设初始位姿)' % name)
+        return self.status()
 
     def start_notify(self):
         with self.lock:
@@ -555,9 +1020,12 @@ class DashboardNode(Node):
 
     def drive(self, payload):
         with self.lock:
-            can_drive = self._is_running('core')
+            # follow 模式靠 core 的 car_base 收 /cmd_vel;nav 模式靠 nav 的 car_base。
+            # 两者都接 /cmd_vel,故只要其一在跑即可遥控(手动建图需要 nav 模式遥控)。
+            can_drive = self._is_running('core') or (
+                self.ui_mode == 'nav' and self._is_running('nav'))
         if not can_drive:
-            raise DashboardError('基础节点未运行，不能遥控。请先启动普通操作或识别记录。', 409)
+            raise DashboardError('底盘未运行，不能遥控。请先启动普通操作,或在导航模式开始建图/加载地图。', 409)
 
         linear = float(payload.get('linear', 0.0))
         angular = float(payload.get('angular', 0.0))
@@ -656,10 +1124,29 @@ class DashboardNode(Node):
             self._publish_twist(0.0, 0.0)
 
     def _publish_twist(self, linear, angular):
+        angular = float(angular)
+        # 旋转死区补偿:非零但低于死区下限的角速度抬到下限(保号),跨过电机静摩擦。
+        # 极小值(<0.02)视为停止意图,不抬,避免松手余量被放大成持续旋转。
+        if 0.02 < abs(angular) < self.min_angular_speed:
+            angular = self.min_angular_speed if angular > 0 else -self.min_angular_speed
         twist = Twist()
         twist.linear.x = float(linear)
-        twist.angular.z = float(angular)
+        twist.angular.z = angular
         self.cmd_pub.publish(twist)
+
+    def _spin_in_place(self, angular_speed=0.4, revolutions=1.0):
+        """原地慢转扫描建初始地图(供 explore 用)。直接发 /cmd_vel,不走
+        drive_timer(避开其超时逻辑)。车前方 180° 雷达转一圈即可扫全周环境
+        (后方被 scan_angle_filter 滤掉不影响),给 explore_lite 喂出满地图前沿。
+        启动 explore 前调用,此时 nav2 控制器无 goal 不发 /cmd_vel,无抢占。"""
+        with self.lock:
+            self.motion_active = False  # 防 drive_timer 干扰
+        duration = revolutions * 2.0 * math.pi / max(0.1, abs(angular_speed))
+        end = time.monotonic() + duration
+        while time.monotonic() < end:
+            self._publish_twist(0.0, angular_speed)
+            time.sleep(0.1)
+        self.publish_stop(repeat=5)
 
     def generate_report(self, payload):
         mode = str(payload.get('mode', 'text')).strip().lower()
@@ -716,6 +1203,7 @@ class DashboardNode(Node):
                 job['finished_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
                 if proc.returncode != 0:
                     self.last_error = '报告生成失败，请查看 report_job.stderr。'
+            self.announce('巡逻报告已生成' if proc.returncode == 0 else '报告生成失败')
         except Exception as exc:
             with self.lock:
                 job['running'] = False
@@ -762,6 +1250,46 @@ class DashboardNode(Node):
     @staticmethod
     def lidar_command():
         return ['ros2', 'launch', 'car_base', 'car_lidar.launch.py']
+
+    @staticmethod
+    def voice_command():
+        return ['ros2', 'launch', 'car_voice', 'voice.launch.py']
+
+    @staticmethod
+    def rosbridge_command():
+        # 发导航 action goal 需在新线程,否则阻塞 rosbridge 主线程。
+        return [
+            'ros2', 'launch', 'rosbridge_server', 'rosbridge_websocket_launch.xml',
+            'send_action_goals_in_new_thread:=true',
+            'call_services_in_new_thread:=true',
+        ]
+
+    @staticmethod
+    def nav_command(carto_slam, map_path=None):
+        """carto_slam=True → 建图(cartographer);False → 加载地图定位(amcl)。
+
+        注意:car_nav2.launch.py 只认 slam(True=建图/cartographer,False=定位/amcl),
+        且其 include 的 car_base.launch.py 把 ekf 设为 UnlessCondition(carto_slam)。
+        cartographer 依赖 ekf 发 /odom_combined 话题与 odom_combined->base_link TF,
+        所以建图时**绝不能**传 carto_slam:=true(会全局生效关掉 ekf,导致永远不出图)。
+        carto_slam 走默认 false 即可,ekf 两种模式都正常启动。
+        """
+        cmd = ['ros2', 'launch', 'car_nav2', 'car_nav2.launch.py']
+        if carto_slam:
+            cmd += ['slam:=True']
+        else:
+            cmd += ['slam:=False']
+            if map_path:
+                cmd += ['map:=%s' % map_path]
+        return cmd
+
+    @staticmethod
+    def explore_command():
+        # use_sim_time 必须显式传 false:explore.launch.py 默认 "true",真机无 /clock
+        # 发布者时 explore_node 时间冻结在 0,定时器/TF 查询全失效 -> 机器人不动。
+        # params.yaml 已设 return_to_init:true、costmap_topic:/global_costmap/costmap。
+        return ['ros2', 'launch', 'explore_lite', 'explore.launch.py',
+                'use_sim_time:=false']
 
     @staticmethod
     def video_url(topic):
@@ -862,12 +1390,19 @@ class DashboardNode(Node):
         self.http_server.shutdown()
         self.http_server.server_close()
 
-    def force_cleanup_residuals(self, include_lidar=False):
+    def force_cleanup_residuals(self, include_lidar=False, include_voice=False,
+                                include_nav=False):
         """按进程特征兜底清理残留(孤儿/非本实例起的功能节点)。
-        先 SIGTERM 再 SIGKILL 整个进程组。用字符类化的 pattern 避免误杀。"""
+        先 SIGTERM 再 SIGKILL 整个进程组。用字符类化的 pattern 避免误杀。
+        注意:voice 默认不清(stop_all 不应杀语音助手);仅启动自清/显式停语音时清。
+        nav 残留(cartographer/nav2 各 server/rosbridge/explore)极易留孤儿,停导航时必清。"""
         patterns = list(RESIDUAL_PATTERNS)
         if include_lidar:
             patterns += LIDAR_PATTERNS
+        if include_voice:
+            patterns += VOICE_PATTERNS
+        if include_nav:
+            patterns += NAV_PATTERNS + LIDAR_PATTERNS
         killed = []
         for sig in (signal.SIGTERM, signal.SIGKILL):
             for pat in patterns:
@@ -927,6 +1462,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self.send_json(self.server.dashboard.get_features())
             elif path == '/api/report/job':
                 self.send_json(self.server.dashboard.get_report_job())
+            elif path == '/api/nav/maps':
+                self.send_json(self.server.dashboard.list_maps())
             elif path.startswith('/static/'):
                 self.serve_file(path[len('/static/'):])
             else:
@@ -940,6 +1477,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             dashboard = self.server.dashboard
             if self.path == '/api/mode/manual':
                 result = dashboard.start_manual_mode()
+            elif self.path == '/api/uimode':
+                result = dashboard.set_ui_mode(payload.get('mode', 'follow'))
+            elif self.path == '/api/nav/stop':
+                result = dashboard.stop_nav()
+            elif self.path == '/api/nav/mapping/start':
+                result = dashboard.start_mapping(explore=bool(payload.get('explore')))
+            elif self.path == '/api/nav/explore/stop':
+                result = dashboard.stop_explore()
+            elif self.path == '/api/nav/map/save':
+                result = dashboard.save_map(payload)
+            elif self.path == '/api/nav/map/load':
+                result = dashboard.load_map(payload)
             elif self.path == '/api/mode/report':
                 result = dashboard.start_report_mode()
             elif self.path == '/api/core/stop':
@@ -976,6 +1525,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 result = dashboard.camera_down()
             elif self.path == '/api/patrol/command':
                 result = dashboard.patrol_command(payload)
+            elif self.path == '/api/patrol/speed':
+                result = dashboard.patrol_speed(payload)
             elif self.path == '/api/patrol/relock':
                 dashboard.publish_patrol_command('relock')
                 result = {'ok': True, 'message': '已发送重新锁定'}
@@ -987,6 +1538,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 result = dashboard.start_lidar()
             elif self.path == '/api/lidar/stop':
                 result = dashboard.stop_lidar()
+            elif self.path == '/api/voice/start':
+                result = dashboard.start_voice()
+            elif self.path == '/api/voice/stop':
+                result = dashboard.stop_voice()
+            elif self.path == '/api/voice/tts/start':
+                result = dashboard.set_voice_toggle('tts', True)
+            elif self.path == '/api/voice/tts/stop':
+                result = dashboard.set_voice_toggle('tts', False)
+            elif self.path == '/api/voice/asr/start':
+                result = dashboard.set_voice_toggle('asr', True)
+            elif self.path == '/api/voice/asr/stop':
+                result = dashboard.set_voice_toggle('asr', False)
             else:
                 result = {'ok': False, 'error': 'not found'}
                 self.send_json(result, 404)
@@ -1046,7 +1609,7 @@ def main():
     node = DashboardNode()
     # 启动自清:清掉上次崩溃/重启遗留的功能节点(不含雷达,雷达由用户/跟随按需起)
     try:
-        n = node.force_cleanup_residuals(include_lidar=False)
+        n = node.force_cleanup_residuals(include_lidar=False, include_voice=True)
         node.get_logger().info('startup cleanup removed %d residual process(es)' % n)
     except Exception as exc:
         node.get_logger().warn('startup cleanup failed: %s' % exc)

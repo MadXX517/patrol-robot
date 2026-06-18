@@ -172,6 +172,13 @@ private:
 private:
 	rclcpp::Time _Now, _Last_Time;
 	float Sampling_Time;
+	// 启动陀螺零偏标定:陀螺零偏每次上电不同(温度/上电时刻),固定常数补不了。
+	// 启动时车静止采样 GYRO_CAL_SAMPLES 帧求均值作零偏,之后每帧减掉。修正 yaw 持续累积漂移。
+	static const int GYRO_CAL_SAMPLES = 150;  // ~3s @50Hz
+	bool gyro_calibrated = false;
+	int gyro_cal_count = 0;
+	double gyro_cal_sum_x = 0.0, gyro_cal_sum_y = 0.0, gyro_cal_sum_z = 0.0;
+	double gyro_bias_x = 0.0, gyro_bias_y = 0.0, gyro_bias_z = 0.0;
 	rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr Cmd_Vel_Sub;
 	rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_teleop_Sub;
 	rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr ik_teleop_Sub;

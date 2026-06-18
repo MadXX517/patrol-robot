@@ -102,10 +102,20 @@ class LLMCommandParser():
                     
                     # 实时提取并处理 JSON 对象
                     if self.json_objects:
-                        if "step" in self.json_objects[0]:
+                        obj = self.json_objects[0]
+                        # 两种形态都接受:
+                        #  1) 分离输出: obj 形如 {"step": {...}}(原 arm/car 行为)
+                        #  2) message 与 step 被模型合并进同一对象,剥离 message 段后
+                        #     残留 step 内层值 {"order":..,"function":..}(无 step 外壳)
+                        step_obj = None
+                        if "step" in obj:
+                            step_obj = obj
+                        elif "function" in obj:
+                            step_obj = {"step": obj}
+                        if step_obj is not None:
                             if self.ros_control_queue is not None:
-                                self.ros_control_queue.put(self.json_objects[0])
-                            print("\n👉 动作加入队列:", self.json_objects[0]["step"])
+                                self.ros_control_queue.put(step_obj)
+                            print("\n👉 动作加入队列:", step_obj["step"])
                             self.json_objects.pop(0)  # 移除已处理的对象
                             
     def _extract_json_objects(self):
@@ -132,8 +142,11 @@ class LLMCommandParser():
             json_str = self.buffer[start_idx:end_idx + 1]
             try:
                 json_obj = json.loads(json_str)
-                # ✅ 只处理 step
-                if "step" in json_obj:
+                # 接受两种形态:
+                #  - {"step": {...}}            分离输出(原 arm/car)
+                #  - {"order":..,"function":..} message 与 step 合并后剥离 message
+                #    段所残留的 step 内层值(顶层只有 function,无 step 外壳)
+                if "step" in json_obj or "function" in json_obj:
                     self.json_objects.append(json_obj)
             except json.JSONDecodeError:
                 pass

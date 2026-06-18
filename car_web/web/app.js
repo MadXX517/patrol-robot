@@ -5,6 +5,13 @@ const api = {
   featureStart: '/api/features/start',
   featureStop: '/api/features/stop',
   reportJob: '/api/report/job',
+  uimode: '/api/uimode',
+  navStop: '/api/nav/stop',
+  mappingStart: '/api/nav/mapping/start',
+  exploreStop: '/api/nav/explore/stop',
+  mapSave: '/api/nav/map/save',
+  mapLoad: '/api/nav/map/load',
+  mapsList: '/api/nav/maps',
   manual: '/api/mode/manual',
   report: '/api/mode/report',
   coreStop: '/api/core/stop',
@@ -21,10 +28,15 @@ const api = {
   cameraDown: '/api/servo/camera_down',
   patrolRelock: '/api/patrol/relock',
   patrolCommand: '/api/patrol/command',
+  patrolSpeed: '/api/patrol/speed',
   gestureStart: '/api/gesture/start',
   gestureStop: '/api/gesture/stop',
   lidarStart: '/api/lidar/start',
   lidarStop: '/api/lidar/stop',
+  voiceTtsStart: '/api/voice/tts/start',
+  voiceTtsStop: '/api/voice/tts/stop',
+  voiceAsrStart: '/api/voice/asr/start',
+  voiceAsrStop: '/api/voice/asr/stop',
   generateReport: '/api/report/generate',
 };
 
@@ -37,7 +49,10 @@ const state = {
   features: [],
   selectedFeatureId: '',
   activeFeature: '',
+  uiMode: 'follow',
+  navMap: null,
   videoFailed: false,
+  manualTopic: null,   // 非空=用户手动选了流,不再被后端自动 topic 覆盖
 };
 
 const els = {
@@ -51,6 +66,7 @@ const els = {
   videoLink: document.getElementById('videoLink'),
   videoHomeLink: document.getElementById('videoHomeLink'),
   videoStream: document.getElementById('videoStream'),
+  streamSelect: document.getElementById('streamSelect'),
   videoError: document.getElementById('videoError'),
   eventsList: document.getElementById('eventsList'),
   eventCount: document.getElementById('eventCount'),
@@ -84,7 +100,27 @@ const els = {
   patrolStopBtn: document.getElementById('patrolStopBtn'),
   gestureToggleBtn: document.getElementById('gestureToggleBtn'),
   lidarToggleBtn: document.getElementById('lidarToggleBtn'),
+  voiceTtsToggleBtn: document.getElementById('voiceTtsToggleBtn'),
+  voiceAsrToggleBtn: document.getElementById('voiceAsrToggleBtn'),
+  voiceState: document.getElementById('voiceState'),
   patrolState: document.getElementById('patrolState'),
+  uiModeFollowBtn: document.getElementById('uiModeFollowBtn'),
+  uiModeNavBtn: document.getElementById('uiModeNavBtn'),
+  followGroup: document.getElementById('followGroup'),
+  navGroup: document.getElementById('navGroup'),
+  navState: document.getElementById('navState'),
+  navStopBtn: document.getElementById('navStopBtn'),
+  navCanvas: document.getElementById('navCanvas'),
+  mapManualBtn: document.getElementById('mapManualBtn'),
+  mapExploreBtn: document.getElementById('mapExploreBtn'),
+  exploreStopBtn: document.getElementById('exploreStopBtn'),
+  mapNameInput: document.getElementById('mapNameInput'),
+  mapSaveBtn: document.getElementById('mapSaveBtn'),
+  mapRefreshBtn: document.getElementById('mapRefreshBtn'),
+  mapList: document.getElementById('mapList'),
+  followSpeed: document.getElementById('followSpeed'),
+  followFasterBtn: document.getElementById('followFasterBtn'),
+  followSlowerBtn: document.getElementById('followSlowerBtn'),
   gestureState: document.getElementById('gestureState'),
   notifyStartBtn: document.getElementById('notifyStartBtn'),
   notifyStopBtn: document.getElementById('notifyStopBtn'),
@@ -183,6 +219,24 @@ function updateButtons(processes) {
   updateFeatureDetailButtons();
 }
 
+function renderVoiceState(data) {
+  const ttsOn = !!data.tts_on;
+  const asrOn = !!data.asr_on;
+  if (els.voiceTtsToggleBtn) {
+    els.voiceTtsToggleBtn.textContent = ttsOn ? '停止语音播报' : '开启语音播报';
+    els.voiceTtsToggleBtn.classList.toggle('primary', !ttsOn);
+    els.voiceTtsToggleBtn.classList.toggle('danger', ttsOn);
+  }
+  if (els.voiceAsrToggleBtn) {
+    els.voiceAsrToggleBtn.textContent = asrOn ? '停止语音触发' : '开启语音触发';
+    els.voiceAsrToggleBtn.classList.toggle('primary', !asrOn);
+    els.voiceAsrToggleBtn.classList.toggle('danger', asrOn);
+  }
+  if (els.voiceState) {
+    els.voiceState.textContent = `语音:播报${ttsOn ? '开' : '关'} / 触发${asrOn ? '开' : '关'}`;
+  }
+}
+
 function renderBattery(battery) {
   if (!els.batteryBadge) return;
   const el = els.batteryBadge;
@@ -208,6 +262,7 @@ function renderPatrolState(raw) {
   if (!els.patrolState) return;
   if (!raw) {
     els.patrolState.textContent = '巡逻:未运行';
+    if (els.followSpeed) els.followSpeed.textContent = '跟随速度:-';
     return;
   }
   try {
@@ -215,6 +270,10 @@ function renderPatrolState(raw) {
     const lock = s.locked ? (s.target_present ? '已锁定' : '目标丢失') : '搜索中';
     const front = (s.front_min === null || s.front_min === undefined) ? '-' : (s.front_min + 'm');
     els.patrolState.textContent = `巡逻:${s.mode || '-'} / ${s.running ? '运行' : '停止'} / ${lock} / 前方${front}`;
+    if (els.followSpeed) {
+      els.followSpeed.textContent = (s.max_lin === undefined || s.max_lin === null)
+        ? '跟随速度:-' : `跟随速度:${s.max_lin} m/s`;
+    }
   } catch (e) {
     els.patrolState.textContent = '巡逻:' + raw;
   }
@@ -247,6 +306,135 @@ function renderGestureState(raw) {
   }
 }
 
+function ensureNavMap() {
+  if (state.navMap || !window.NavMap || !els.navCanvas) { return state.navMap; }
+  const nm = new NavMap(els.navCanvas, {});
+  nm.onStatus = (text, bad) => {
+    if (els.navState && state.uiMode === 'nav') {
+      els.navState.textContent = `地图:${text}`;
+    }
+  };
+  nm.onClickWorld = (x, y) => {
+    // 阶段4 接入设目标;此处先提示坐标
+    setStatus(`地图点击:x=${x.toFixed(2)} y=${y.toFixed(2)}(导航阶段接入)`, false);
+  };
+  nm.bindClick();
+  state.navMap = nm;
+  window.addEventListener('resize', () => {
+    if (state.uiMode === 'nav' && state.navMap) {
+      if (state.navMap.resize()) { state.navMap.render(); }
+    }
+  });
+  return nm;
+}
+
+function applyUiMode(mode) {
+  state.uiMode = mode === 'nav' ? 'nav' : 'follow';
+  const isNav = state.uiMode === 'nav';
+  document.body.classList.toggle('nav-ui', isNav);  // 控制 nav 模式专属布局(隐藏事件栏等)
+  if (els.followGroup) els.followGroup.classList.toggle('hidden', isNav);
+  if (els.navGroup) els.navGroup.classList.toggle('hidden', !isNav);
+  if (els.uiModeFollowBtn) els.uiModeFollowBtn.classList.toggle('active', !isNav);
+  if (els.uiModeNavBtn) els.uiModeNavBtn.classList.toggle('active', isNav);
+  // 画布与视频互斥显示
+  if (els.navCanvas) els.navCanvas.classList.toggle('hidden', !isNav);
+  if (els.videoStream) els.videoStream.classList.toggle('hidden', isNav);
+  // nav 模式隐藏"视频未加载"覆盖层(不属于建图画面)
+  if (els.videoError) els.videoError.classList.toggle('hidden', isNav);
+  if (isNav) {
+    // 停止视频加载:清空 src,否则旧流报错会异步重弹"视频未加载",
+    // 且可见的 <img> 会与 canvas 在 flex 容器里并排挤成两半。
+    if (els.videoStream) els.videoStream.removeAttribute('src');
+    state.videoUrl = '';
+    state.videoTopic = '';
+    state.videoFailed = false;
+    const nm = ensureNavMap();
+    if (nm && !nm.connected) {
+      nm.connect(`ws://${location.hostname}:9090`);
+    }
+    // canvas 此刻刚显示,缓冲尺寸需同步到实际像素再渲染
+    if (nm) {
+      requestAnimationFrame(() => { nm.resize(); nm.render(); });
+      nm.render();
+    }
+  } else if (state.navMap) {
+    state.navMap.disconnect();
+  }
+}
+
+function renderUiMode(data) {
+  const mode = data.ui_mode || 'follow';
+  if (mode !== state.uiMode) {
+    applyUiMode(mode);
+  }
+  if (els.navState) {
+    const ns = data.nav_state || 'idle';
+    const label = {
+      idle: '空闲', mapping: '建图中', exploring: '自动探索中',
+      localizing: '定位中', navigating: '导航中', cruising: '巡航中',
+    }[ns] || ns;
+    els.navState.textContent = `导航:${label}${data.nav_feedback ? ' · ' + data.nav_feedback : ''}`;
+  }
+}
+
+async function setUiMode(mode) {
+  // 乐观切 UI,后端编排(停跟随/起导航栈)可能耗时
+  applyUiMode(mode);
+  try {
+    await request(api.uimode, { method: 'POST', body: { mode } });
+    await refreshStatus();
+    if (mode === 'nav') { refreshMapList(); }
+  } catch (error) {
+    setStatus(`切换模式失败：${error.message}`, true);
+  }
+}
+
+async function refreshMapList() {
+  if (!els.mapList) { return; }
+  try {
+    const data = await request(api.mapsList);
+    renderMapList(data.maps || [], data.current_map || '');
+  } catch (error) {
+    els.mapList.innerHTML = `<div class="empty-state">地图列表读取失败</div>`;
+  }
+}
+
+function renderMapList(maps, current) {
+  if (!maps.length) {
+    els.mapList.innerHTML = `<div class="empty-state">暂无已存地图</div>`;
+    return;
+  }
+  els.mapList.innerHTML = maps.map((name) => {
+    const active = name === current ? ' active' : '';
+    return `<button class="map-item${active}" data-map="${escapeHtml(name)}">${escapeHtml(name)}</button>`;
+  }).join('');
+  els.mapList.querySelectorAll('.map-item').forEach((btn) => {
+    btn.addEventListener('click', () => loadMap(btn.dataset.map));
+  });
+}
+
+async function loadMap(name) {
+  if (!confirm(`加载地图「${name}」并进入定位导航?`)) { return; }
+  try {
+    await request(api.mapLoad, { method: 'POST', body: { name } });
+    await refreshStatus();
+    refreshMapList();
+  } catch (error) {
+    setStatus(`加载地图失败：${error.message}`, true);
+  }
+}
+
+async function saveMap() {
+  const name = (els.mapNameInput.value || '').trim();
+  try {
+    const data = await request(api.mapSave, { method: 'POST', body: { name } });
+    setStatus(`地图已保存：${data.name}`, false);
+    renderMapList(data.maps || [], data.name);
+  } catch (error) {
+    setStatus(`保存地图失败：${error.message}`, true);
+  }
+}
+
 async function refreshStatus() {
   try {
     const data = await request(api.status);
@@ -255,7 +443,9 @@ async function refreshStatus() {
     setBadge(els.reportBadge, 'report', processes.report && processes.report.running);
     setBadge(els.notifyBadge, 'notify', processes.notify && processes.notify.running);
     state.activeFeature = data.active_feature || '';
-    setVideo(data);
+    if (!state.manualTopic && state.uiMode !== 'nav') {
+      setVideo(data);
+    }
     updateButtons(processes);
     updateFeatureCards();
     renderSelectedFeatureDetail();
@@ -265,6 +455,8 @@ async function refreshStatus() {
     renderPatrolState(data.patrol_state);
     renderGestureState(data.gesture_state);
     renderBattery(data.battery);
+    renderVoiceState(data);
+    renderUiMode(data);
   } catch (error) {
     setStatus(`后端连接失败：${error.message}`, true);
   }
@@ -508,6 +700,14 @@ function escapeHtml(value) {
 
 function bindControls() {
   els.manualBtn.addEventListener('click', () => postAndRefresh(api.manual));
+  if (els.uiModeFollowBtn) els.uiModeFollowBtn.addEventListener('click', () => setUiMode('follow'));
+  if (els.uiModeNavBtn) els.uiModeNavBtn.addEventListener('click', () => setUiMode('nav'));
+  if (els.navStopBtn) els.navStopBtn.addEventListener('click', () => postAndRefresh(api.navStop));
+  if (els.mapManualBtn) els.mapManualBtn.addEventListener('click', () => postAndRefresh(api.mappingStart, { explore: false }));
+  if (els.mapExploreBtn) els.mapExploreBtn.addEventListener('click', () => postAndRefresh(api.mappingStart, { explore: true }));
+  if (els.exploreStopBtn) els.exploreStopBtn.addEventListener('click', () => postAndRefresh(api.exploreStop));
+  if (els.mapSaveBtn) els.mapSaveBtn.addEventListener('click', () => saveMap());
+  if (els.mapRefreshBtn) els.mapRefreshBtn.addEventListener('click', () => refreshMapList());
   els.coreStopBtn.addEventListener('click', () => postAndRefresh(api.coreStop));
   els.reportBtn.addEventListener('click', () => postAndRefresh(api.report));
   els.reportStopBtn.addEventListener('click', () => postAndRefresh(api.reportStop));
@@ -528,6 +728,17 @@ function bindControls() {
   els.featureStartBtn.addEventListener('click', () => startFeature(state.selectedFeatureId));
   els.featureStopBtn.addEventListener('click', stopFeature);
   els.chassisResetBtn.addEventListener('click', () => postAction(api.chassisReset, '底盘复位'));
+  if (els.streamSelect) {
+    els.streamSelect.addEventListener('change', () => {
+      const topic = els.streamSelect.value;
+      if (!topic) {
+        state.manualTopic = null;          // 回到自动:下次轮询用后端 topic
+        return;
+      }
+      state.manualTopic = topic;           // 锁定手动选择
+      setVideo({ video_topic: topic, video_url: `/stream?topic=${topic}&type=mjpeg` }, true);
+    });
+  }
   els.cameraLeftBtn.addEventListener('click', () => postAction(api.cameraLeft, '摄像头左看'));
   els.cameraRightBtn.addEventListener('click', () => postAction(api.cameraRight, '摄像头右看'));
   els.cameraUpBtn.addEventListener('click', () => postAction(api.cameraUp, '摄像头上看'));
@@ -545,6 +756,12 @@ function bindControls() {
   if (els.patrolStopBtn) {
     els.patrolStopBtn.addEventListener('click', () => postPatrolCmd('stop', '停止跟随'));
   }
+  if (els.followFasterBtn) {
+    els.followFasterBtn.addEventListener('click', () => postAndRefresh(api.patrolSpeed, { action: 'up' }));
+  }
+  if (els.followSlowerBtn) {
+    els.followSlowerBtn.addEventListener('click', () => postAndRefresh(api.patrolSpeed, { action: 'down' }));
+  }
   if (els.gestureToggleBtn) {
     els.gestureToggleBtn.addEventListener('click', () => {
       const running = els.gestureToggleBtn.textContent.includes('停止');
@@ -555,6 +772,18 @@ function bindControls() {
     els.lidarToggleBtn.addEventListener('click', () => {
       const running = els.lidarToggleBtn.textContent.includes('停止');
       postAndRefresh(running ? api.lidarStop : api.lidarStart);
+    });
+  }
+  if (els.voiceTtsToggleBtn) {
+    els.voiceTtsToggleBtn.addEventListener('click', () => {
+      const on = els.voiceTtsToggleBtn.textContent.includes('停止');
+      postAndRefresh(on ? api.voiceTtsStop : api.voiceTtsStart);
+    });
+  }
+  if (els.voiceAsrToggleBtn) {
+    els.voiceAsrToggleBtn.addEventListener('click', () => {
+      const on = els.voiceAsrToggleBtn.textContent.includes('停止');
+      postAndRefresh(on ? api.voiceAsrStop : api.voiceAsrStart);
     });
   }
   document.getElementById('stopBtn').addEventListener('click', stopDrive);
@@ -573,10 +802,12 @@ function bindControls() {
   });
 
   els.videoStream.addEventListener('load', () => {
+    if (state.uiMode === 'nav') return;
     state.videoFailed = false;
     els.videoError.classList.add('hidden');
   });
   els.videoStream.addEventListener('error', () => {
+    if (state.uiMode === 'nav') return;
     state.videoFailed = true;
     els.videoError.textContent = '视频未加载，点击右上角视频直链排查';
     els.videoError.classList.remove('hidden');

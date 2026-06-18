@@ -57,7 +57,8 @@ class PersonFollow(Node):
         self.declare_parameter('mode', 'follow')                 # follow | track_only
         self.declare_parameter('machine_type', 'Mec')            # Mec | Ack
         self.declare_parameter('follow_distance', 1.2)           # 期望跟随距离(m)
-        self.declare_parameter('safe_distance', 0.8)             # 安全停车距离(m)
+        self.declare_parameter('safe_distance', 0.8)             # 安全停车距离(m,离人太近)
+        self.declare_parameter('lidar_safe_distance', 0.45)      # 雷达避障触发距离(m,与离人距离解耦)
         self.declare_parameter('max_lin', 0.25)                  # 最大线速度
         self.declare_parameter('max_ang', 0.8)                   # 最大角速度
         self.declare_parameter('lost_timeout', 2.0)              # 丢失多久后停
@@ -72,6 +73,7 @@ class PersonFollow(Node):
         self.machine_type = self.get_parameter('machine_type').value
         self.follow_distance = float(self.get_parameter('follow_distance').value)
         self.safe_distance = float(self.get_parameter('safe_distance').value)
+        self.lidar_safe_distance = float(self.get_parameter('lidar_safe_distance').value)
         self.max_lin = float(self.get_parameter('max_lin').value)
         self.max_ang = float(self.get_parameter('max_ang').value)
         self.lost_timeout = float(self.get_parameter('lost_timeout').value)
@@ -240,6 +242,36 @@ class PersonFollow(Node):
             self.get_logger().info('cmd: relock')
         elif cmd == 'gimbal_home':
             self._gimbal_home()
+        elif cmd in ('speed_up', 'speed_down', 'speed_normal') or cmd.startswith('speed_set:'):
+            self._adjust_speed(cmd)
+        elif cmd.startswith('lidar_safe:'):
+            self._adjust_lidar_safe(cmd)
+
+    def _adjust_speed(self, cmd):
+        """运行时调跟随线速度上限。钳在 0.1~0.45,normal=0.25,步进 0.05。"""
+        with self.lock:
+            if cmd == 'speed_up':
+                self.max_lin = min(0.45, round(self.max_lin + 0.05, 2))
+            elif cmd == 'speed_down':
+                self.max_lin = max(0.1, round(self.max_lin - 0.05, 2))
+            elif cmd == 'speed_normal':
+                self.max_lin = 0.25
+            elif cmd.startswith('speed_set:'):
+                try:
+                    self.max_lin = common.set_range(float(cmd.split(':', 1)[1]), 0.1, 0.45)
+                except (ValueError, IndexError):
+                    return
+        self.get_logger().info('cmd: %s -> max_lin=%.2f' % (cmd, self.max_lin))
+
+    def _adjust_lidar_safe(self, cmd):
+        """运行时调雷达避障触发距离。钳在 0.2~1.0。"""
+        try:
+            val = float(cmd.split(':', 1)[1])
+        except (ValueError, IndexError):
+            return
+        with self.lock:
+            self.lidar_safe_distance = common.set_range(val, 0.2, 1.0)
+        self.get_logger().info('cmd: %s -> lidar_safe=%.2f' % (cmd, self.lidar_safe_distance))
 
     # ===================== 服务 =====================
     def _enter_srv(self, req, resp):
@@ -496,7 +528,7 @@ class PersonFollow(Node):
                 v = (0.45 - ratio) * 1.2
             # 安全:太近 / 雷达前方障碍 → 不再靠近(允许后退)
             too_close = (d is not None and d < self.safe_distance)
-            lidar_block = (self.use_lidar_safety and self.front_min < self.safe_distance)
+            lidar_block = (self.use_lidar_safety and self.front_min < self.lidar_safe_distance)
             if too_close or lidar_block:
                 v = min(v, 0.0)
             v = common.set_range(v, -self.max_lin, self.max_lin)
@@ -617,6 +649,7 @@ class PersonFollow(Node):
                 'mode': self.mode,
                 'locked': self.locked,
                 'target_present': self.target_present,
+                'max_lin': round(self.max_lin, 2),
                 'front_min': None if not math.isfinite(self.front_min) else round(self.front_min, 2),
             }
             if self.last_box is not None:

@@ -11,6 +11,7 @@ def generate_launch_description():
                                      description='follow | track_only')
     follow_distance_arg = DeclareLaunchArgument('follow_distance', default_value='1.2')
     safe_distance_arg = DeclareLaunchArgument('safe_distance', default_value='0.8')
+    lidar_safe_distance_arg = DeclareLaunchArgument('lidar_safe_distance', default_value='0.45')
     max_lin_arg = DeclareLaunchArgument('max_lin', default_value='0.25')
     max_ang_arg = DeclareLaunchArgument('max_ang', default_value='0.8')
     machine_type_arg = DeclareLaunchArgument('machine_type', default_value='Mec')
@@ -47,6 +48,7 @@ def generate_launch_description():
             'machine_type': LaunchConfiguration('machine_type'),
             'follow_distance': LaunchConfiguration('follow_distance'),
             'safe_distance': LaunchConfiguration('safe_distance'),
+            'lidar_safe_distance': LaunchConfiguration('lidar_safe_distance'),
             'max_lin': LaunchConfiguration('max_lin'),
             'max_ang': LaunchConfiguration('max_ang'),
             'auto_start': LaunchConfiguration('auto_start'),
@@ -54,7 +56,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        mode_arg, follow_distance_arg, safe_distance_arg, max_lin_arg, max_ang_arg,
+        mode_arg, follow_distance_arg, safe_distance_arg, lidar_safe_distance_arg, max_lin_arg, max_ang_arg,
         machine_type_arg, auto_start_arg, conf_thres_arg,
         yolo_node, person_follow_node,
     ])
