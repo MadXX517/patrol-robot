@@ -890,7 +890,7 @@ function bindControls() {
   els.featureCloseBtn.addEventListener('click', () => els.featurePanel.classList.add('hidden'));
   if (els.eventsToggleBtn) {
     els.eventsToggleBtn.addEventListener('click', () => {
-      const collapsed = els.eventsList.classList.toggle('hidden');
+      const collapsed = document.body.classList.toggle('events-collapsed');
       els.eventsToggleBtn.textContent = collapsed ? '展开' : '收起';
     });
   }

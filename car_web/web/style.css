@@ -413,6 +413,14 @@ body.nav-ui .layout {
   grid-template-rows: minmax(0, 1fr);
 }
 
+/* 识别事件栏收起:列表隐藏,事件行收到只剩标题高度 */
+body.events-collapsed:not(.nav-ui) .layout {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+body.events-collapsed .events-list {
+  display: none;
+}
+
 .btn,
 .drive {
   border: 1px solid var(--line);
