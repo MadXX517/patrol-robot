@@ -59,7 +59,16 @@ TRAJECTORY_BUILDER_2D.submaps.range_data_inserter.probability_grid_range_data_in
 TRAJECTORY_BUILDER_2D.submaps.range_data_inserter.probability_grid_range_data_inserter.miss_probability = 0.495  -- 穿过擦除强度,往0.5提=擦得轻(默认0.49)
 TRAJECTORY_BUILDER_2D.missing_data_ray_length = 1.0  -- 缺失数据的射线长度(默认/原3.0,缩短限制远距擦除)
 TRAJECTORY_BUILDER_2D.voxel_filter_size = 0.025  -- 体素滤波器的大小
-TRAJECTORY_BUILDER_2D.motion_filter.max_angle_radians = math.rad(0.1) --设置运动过滤器的最大角度变化为 0.1 弧度，可以减少频繁发布的位姿更新，从而减少计算负担
+-- NOTE(2026-修横漂): 静止时地图随时间横漂、且漂幅随地图增大——pose-graph 全局优化的特征。
+-- 机理:motion_filter 任一阈值超限就插一个轨迹节点;原 max_angle=0.1° 比 cartographer 默认(1°)
+-- 紧10倍,静止时陀螺残余零偏(~0.17°/s)+扫描噪声轻松超 0.1°,于是停车也在不停插节点,
+-- 每 optimize_every_n_nodes(35)触发一次全局重优化,把整条轨迹拽动→静止横漂,图越大漂越狠。
+-- 新图节点少无可优化故不漂(已实验证实)。修法:不要在静止时插节点——
+-- 角阈值回到合理值 0.5°(噪声/零偏不再触发),时间阈值 5→30s(停车每30s才强插一个,优化频率↓6×)。
+-- 行进时仍由 max_distance(默认0.2m)正常触发,建图细节不受影响。
+TRAJECTORY_BUILDER_2D.motion_filter.max_time_seconds = 30.0    -- 停车强插节点周期(默认5,拉长抑制静止节点堆积)
+TRAJECTORY_BUILDER_2D.motion_filter.max_distance_meters = 0.2  -- 行进位移触发(默认0.2,显式写出)
+TRAJECTORY_BUILDER_2D.motion_filter.max_angle_radians = math.rad(0.5)  -- 原0.1°过紧致静止噪声狂插节点,回到0.5°
 
 TRAJECTORY_BUILDER_2D.adaptive_voxel_filter.max_length = 0.5  -- 自适应体素滤波器的最大长度
 TRAJECTORY_BUILDER_2D.adaptive_voxel_filter.min_num_points = 200  -- 自适应体素滤波器的最小点数

@@ -132,7 +132,7 @@ controller_server:
         type: "polygon"
         # 真实车身 0.272(长)x0.245(宽)+ ~1.5cm 余量。矩形让 TEB 按朝向算间隙,
         # 转正用窄边(0.245)穿洞,不像圆形按对角线(0.38)硬算把宽洞算死。
-        vertices: "[[0.15, 0.14], [0.15, -0.14], [-0.15, -0.14], [-0.15, 0.14]]"
+        vertices: "[[0.136, 0.1225], [0.136, -0.1225], [-0.136, -0.1225], [-0.136, 0.1225]]"
 
       # GoalTolerance
       free_goal_vel: True
@@ -226,12 +226,12 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.03
-      footprint: "[[0.15, 0.14], [0.15, -0.14], [-0.15, -0.14], [-0.15, 0.14]]"
+      footprint: "[[0.136, 0.1225], [0.136, -0.1225], [-0.136, -0.1225], [-0.136, 0.1225]]"
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0
-        inflation_radius: 0.16
+        inflation_radius: 0.15
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -271,7 +271,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: False
-      footprint: "[[0.15, 0.14], [0.15, -0.14], [-0.15, -0.14], [-0.15, 0.14]]"
+      footprint: "[[0.136, 0.1225], [0.136, -0.1225], [-0.136, -0.1225], [-0.136, 0.1225]]"
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
@@ -295,7 +295,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0
-        inflation_radius: 0.16
+        inflation_radius: 0.15
       always_send_full_costmap: True
   global_costmap_client:
     ros__parameters:

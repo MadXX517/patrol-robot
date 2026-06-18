@@ -15,7 +15,10 @@ from urllib.parse import unquote, urlsplit
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
+from nav2_msgs.action import NavigateToPose, FollowWaypoints
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32, String
@@ -194,8 +197,7 @@ class DashboardNode(Node):
         self.ui_mode = 'follow'           # 'follow'(跟随/巡检) | 'nav'(建图导航),两大模式互斥
         self.nav_state = 'idle'           # idle|mapping|exploring|localizing|navigating|cruising
         self.nav_feedback = ''            # 导航反馈(距目标/状态文字)
-        self.current_map = ''             # 当前加载/在建的地图名
-        self.current_video_topic = CAMERA_TOPIC
+        self.current_map = ''             # 当前加载/在建的地图名        self.current_video_topic = CAMERA_TOPIC
         self.active_feature = ''
         self.last_error = ''
         self.events = []
@@ -242,6 +244,18 @@ class DashboardNode(Node):
             PoseWithCovarianceStamped, '/initialpose', 5)
         self.last_robot_pose = None       # (x, y, yaw) in map frame, 供回起点/打点用
         self.home_pose = None             # 进建图那刻记录的起点 (x, y, yaw)
+        # 导航调速:TEB controller_server 的 FollowPath 速度上限,按 scale 整体缩放。
+        # 基准取自 car_teb.yaml(max_vel_x=0.18 等)。运行时 ros2 param set 动态生效。
+        self.nav_speed_base = {'x': 0.18, 'back': 0.10, 'theta': 0.4}
+        self.nav_speed_scale = 1.0        # 0.4~2.0,网页加减档
+        # NavigateToPose action 客户端:canvas 点击导航 / 回起点。非阻塞发目标,
+        # 回调更新 nav_state/nav_feedback。goal handle 存下供取消。
+        self.nav_action = ActionClient(self, NavigateToPose, '/navigate_to_pose')
+        self._nav_goal_handle = None
+        # FollowWaypoints action 客户端:多点巡航。车依次到访点列表,可取消。
+        self.cruise_action = ActionClient(self, FollowWaypoints, '/follow_waypoints')
+        self._cruise_goal_handle = None
+        self._cruise_total = 0
         self.create_timer(0.2, self.publish_robot_pose)
 
         self.http_server = ThreadingHTTPServer(
@@ -261,6 +275,12 @@ class DashboardNode(Node):
             % (self.http_host, self.http_port, str(self.web_dir))
         )
 
+        # 注意:core 的自启移到 main() 的「启动自清」之后。否则 __init__ 在此起 core,
+        # 紧接着 main() 的 force_cleanup_residuals 会按 car_web_core.launch 特征把刚起的
+        # core 杀掉(启动顺序竞态:core 偶尔逃过、偶尔被杀,表现为 core 时有时无)。
+
+    def start_core_safe(self):
+        """启动自清之后再调:起 core 并吞掉异常,记 last_error。"""
         try:
             self.start_core()
         except DashboardError as exc:
@@ -402,6 +422,7 @@ class DashboardNode(Node):
                 'nav_state': self.nav_state,
                 'nav_feedback': self.nav_feedback,
                 'current_map': self.current_map,
+                'nav_speed_scale': self.nav_speed_scale,
                 'active_feature': self.active_feature,
                 'video_topic': current_video_topic,
                 'video_url': self.video_url(current_video_topic),
@@ -886,7 +907,9 @@ class DashboardNode(Node):
         with self.lock:
             self.nav_state = 'exploring' if explore else 'mapping'
             self.current_map = ''
-            self.home_pose = None
+            # cartographer 起图时把 map 原点锚在车当前位姿,故起点=(0,0,0)
+            self.home_pose = (0.0, 0.0, 0.0)
+            self.nav_speed_scale = 1.0
         if explore:
             # 给 cartographer/nav2 起身时间(也覆盖 car_base 陀螺静止标定窗口)
             time.sleep(8.0)
@@ -901,9 +924,15 @@ class DashboardNode(Node):
         return self.status()
 
     def stop_explore(self):
-        """只停自动探索,保留建图(可转手动继续补图)。"""
+        """只停自动探索,保留建图(可转手动继续补图)。
+
+        绝不调 force_cleanup_residuals:nav 栈经 car_base.launch 拉起的相机
+        (astra_camera_node/car_camera.launch/base_serial.launch)在 RESIDUAL_PATTERNS 里,
+        而它们与 cartographer/nav2 同属 nav launch 的进程组;force_cleanup 用 killpg 杀组
+        会把整个 nav 栈连根带走(地图丢失)。explore 是独立进程组,_cleanup_explore_residual
+        只 pgrep '[e]xplore' 并 killpg,精准清 explore 自己,不碰 nav。
+        """
         self.stop_process('explore')
-        self.force_cleanup_residuals(include_nav=False)  # explore 在 RESIDUAL? 否,单独清
         self._cleanup_explore_residual()
         with self.lock:
             if self.nav_state == 'exploring':
@@ -988,13 +1017,18 @@ class DashboardNode(Node):
         self.stop_process('explore')
         self.stop_process('nav')
         self._cleanup_explore_residual()
-        self.force_cleanup_residuals(include_nav=True)
+        # 保活 rosbridge:本函数常在已处 nav 模式下被调(点地图列表),浏览器已连 :9090
+        # 并订阅了 /map。若杀掉 rosbridge,浏览器断连重连后会错过 map_server 的 latched
+        # /map(transient_local 只发一次)→ 画布空白。保活后,订阅持续,新 map_server
+        # 起来发布 /map 时既有订阅者即可收到,画布正常刷新。
+        self.force_cleanup_residuals(include_nav=True, preserve_rosbridge=True)
         time.sleep(1.0)
         self.start_process('nav', self.nav_command(carto_slam=False, map_path=yaml_path))
         with self.lock:
             self.nav_state = 'localizing'
             self.current_map = name
-            self.home_pose = None
+            self.home_pose = (0.0, 0.0, 0.0)
+            self.nav_speed_scale = 1.0   # 新 controller_server 用 yaml 默认速度
         if seed_pose is not None:
             # 后台等 amcl 订阅连上再发,不阻塞 HTTP 响应
             threading.Thread(target=self._publish_initialpose_async,
@@ -1003,6 +1037,329 @@ class DashboardNode(Node):
         else:
             self.announce('已加载地图:%s(请在地图上点设初始位姿)' % name)
         return self.status()
+
+    def _send_nav_goal(self, x, y, yaw, label):
+        """构造 NavigateToPose 目标并异步发送。HTTP 线程不阻塞:等 server 就绪
+        (短超时)后 send_goal_async,回调里更新 nav_state/feedback、存 goal handle。"""
+        if not self.nav_action.wait_for_server(timeout_sec=3.0):
+            raise DashboardError('导航 action 服务未就绪(nav2 未起齐)。', 503)
+        goal = NavigateToPose.Goal()
+        goal.pose.header.frame_id = MAP_FRAME
+        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.pose.position.x = x
+        goal.pose.pose.position.y = y
+        qx, qy, qz, qw = yaw_to_quaternion(yaw)
+        goal.pose.pose.orientation.x = qx
+        goal.pose.pose.orientation.y = qy
+        goal.pose.pose.orientation.z = qz
+        goal.pose.pose.orientation.w = qw
+        with self.lock:
+            self.nav_state = 'navigating'
+            self.nav_feedback = label
+        fut = self.nav_action.send_goal_async(
+            goal, feedback_callback=self._nav_feedback_cb)
+        fut.add_done_callback(self._nav_goal_response_cb)
+        self.announce(label)
+
+    def _nav_goal_response_cb(self, future):
+        handle = future.result()
+        if not handle.accepted:
+            with self.lock:
+                self.nav_feedback = '导航目标被拒绝'
+                self.nav_state = 'localizing' if self.current_map else 'mapping'
+            return
+        self._nav_goal_handle = handle
+        handle.get_result_async().add_done_callback(self._nav_result_cb)
+
+    def _nav_feedback_cb(self, msg):
+        try:
+            dist = msg.feedback.distance_remaining
+        except AttributeError:
+            return
+        with self.lock:
+            self.nav_feedback = '距目标 %.2f m' % dist
+
+    def _nav_result_cb(self, future):
+        status = future.result().status
+        self._nav_goal_handle = None
+        say = None
+        with self.lock:
+            if status == GoalStatus.STATUS_SUCCEEDED:
+                self.nav_feedback = '已到达目标'
+                say = '已到达'
+            elif status == GoalStatus.STATUS_CANCELED:
+                self.nav_feedback = '导航已取消'
+            else:
+                self.nav_feedback = '导航未完成(状态 %d)' % status
+                say = '没能到达目标'
+            self.nav_state = 'localizing' if self.current_map else 'mapping'
+        if say:
+            self.announce(say)
+
+    def nav_speed(self, payload):
+        """导航调速:payload {action:'up'|'down'|'normal'} 或 {scale:0.x}。
+        按 scale 整体缩放 TEB 的 max_vel_x/back/theta,ros2 param set 到 controller_server 即时生效。"""
+        self._require_nav_mode()
+        payload = payload or {}
+        with self.lock:
+            scale = self.nav_speed_scale
+        if payload.get('scale') is not None:
+            try:
+                scale = float(payload['scale'])
+            except (TypeError, ValueError):
+                raise DashboardError('scale 无效。', 400)
+        else:
+            action = str(payload.get('action', '')).strip().lower()
+            if action == 'up':
+                scale += 0.2
+            elif action == 'down':
+                scale -= 0.2
+            elif action == 'normal':
+                scale = 1.0
+            else:
+                raise DashboardError('调速参数无效(需 action=up/down/normal 或 scale)。', 400)
+        scale = max(0.4, min(2.0, round(scale, 2)))
+        b = self.nav_speed_base
+        params = {
+            'max_vel_x': round(b['x'] * scale, 3),
+            'max_vel_x_backwards': round(b['back'] * scale, 3),
+            'max_vel_theta': round(b['theta'] * scale, 3),
+        }
+        # 先更新状态并立即返回,显示瞬间刷新;3 次 ros2 param set(每次 CLI 启动 ~0.4s,
+        # 同步跑会让按钮卡 ~1s)丢后台线程,车速随后跟上(肉眼无感)。
+        with self.lock:
+            self.nav_speed_scale = scale
+            self.nav_feedback = '导航限速 ×%.1f (%.2f m/s)' % (scale, params['max_vel_x'])
+        threading.Thread(target=self._apply_nav_speed, args=(params,), daemon=True).start()
+        self.announce('导航限速 %.1f 倍' % scale)
+        return self.status()
+
+    def _apply_nav_speed(self, params):
+        """后台把 TEB 速度上限 param set 到 controller_server(FollowPath 插件)。"""
+        for key, val in params.items():
+            try:
+                subprocess.run(
+                    ['ros2', 'param', 'set', '/controller_server',
+                     'FollowPath.%s' % key, str(val)],
+                    timeout=5, capture_output=True)
+            except Exception as exc:
+                self.get_logger().warn('nav_speed param set %s 失败: %s' % (key, exc))
+
+    def set_initial_pose(self, payload):
+        """手动设 amcl 初始位姿(网页点图拖朝向)。{x,y,yaw}。需在定位中。"""
+        self._require_nav_mode()
+        if not self._is_running('nav'):
+            raise DashboardError('导航栈未运行,无法设初始位姿。', 409)
+        try:
+            x = float(payload.get('x'))
+            y = float(payload.get('y'))
+            yaw = float(payload.get('yaw', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            raise DashboardError('位姿参数无效。', 400)
+        # amcl 已订阅(定位中),后台线程发(等订阅+连发3次),不阻塞 HTTP
+        threading.Thread(target=self._publish_initialpose_async,
+                         args=((x, y, yaw),), daemon=True).start()
+        with self.lock:
+            self.nav_feedback = '已设初始位姿 (%.2f, %.2f)' % (x, y)
+        self.announce('已设初始位姿')
+        return self.status()
+
+    def goto(self, payload):
+        """canvas 点击单点导航。{x,y,yaw?} in map frame。需 nav 栈在跑。"""
+        self._require_nav_mode()
+        if not self._is_running('nav'):
+            raise DashboardError('导航栈未运行,请先建图或加载地图。', 409)
+        try:
+            x = float(payload.get('x'))
+            y = float(payload.get('y'))
+        except (TypeError, ValueError):
+            raise DashboardError('目标坐标无效。', 400)
+        yaw = float(payload.get('yaw', 0.0) or 0.0)
+        self._send_nav_goal(x, y, yaw, '导航至 (%.2f, %.2f)' % (x, y))
+        return self.status()
+
+    # ---- 命名点(预设打点):存车当前位姿,关联当前地图,供网页/语音按名导航 ----
+    def _points_path(self, map_name):
+        """命名点存 ~/maps/<地图名>.points.json,每张图独立一组。"""
+        return os.path.join(MAPS_DIR, self._safe_map_name(map_name) + '.points.json')
+
+    def _load_points(self, map_name):
+        if not map_name:
+            return {}
+        try:
+            with open(self._points_path(map_name), 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_points(self, map_name, points):
+        os.makedirs(MAPS_DIR, exist_ok=True)
+        with open(self._points_path(map_name), 'w', encoding='utf-8') as f:
+            json.dump(points, f, ensure_ascii=False, indent=2)
+
+    def list_points(self, payload=None):
+        """列当前地图的命名点。"""
+        with self.lock:
+            map_name = self.current_map
+        pts = self._load_points(map_name)
+        items = [{'name': k, 'x': v.get('x'), 'y': v.get('y'), 'yaw': v.get('yaw', 0.0)}
+                 for k, v in sorted(pts.items())]
+        return {'ok': True, 'map': map_name, 'points': items}
+
+    def save_point(self, payload):
+        """把车当前位姿存为命名点。{name}。需 nav 模式且已知当前位姿。"""
+        self._require_nav_mode()
+        name = self._safe_map_name((payload or {}).get('name'))
+        if not name or name == 'map':
+            raise DashboardError('点名无效,请输入名字。', 400)
+        with self.lock:
+            map_name = self.current_map
+            pose = self.last_robot_pose
+        if not map_name:
+            raise DashboardError('未加载地图,无法存点。', 409)
+        if pose is None:
+            raise DashboardError('当前位姿未知(定位未就绪),稍候再存。', 409)
+        pts = self._load_points(map_name)
+        pts[name] = {'x': round(pose[0], 4), 'y': round(pose[1], 4), 'yaw': round(pose[2], 4)}
+        self._save_points(map_name, pts)
+        self.announce('已存点:%s' % name)
+        return self.list_points()
+
+    def delete_point(self, payload):
+        """删命名点。{name}。"""
+        self._require_nav_mode()
+        name = str((payload or {}).get('name', '')).strip()
+        with self.lock:
+            map_name = self.current_map
+        pts = self._load_points(map_name)
+        if name in pts:
+            del pts[name]
+            self._save_points(map_name, pts)
+        return self.list_points()
+
+    def goto_point(self, payload):
+        """按名导航到命名点。{name}。供网页按钮 + 后续语音"去xxx点"复用。"""
+        self._require_nav_mode()
+        if not self._is_running('nav'):
+            raise DashboardError('导航栈未运行,请先建图或加载地图。', 409)
+        name = str((payload or {}).get('name', '')).strip()
+        with self.lock:
+            map_name = self.current_map
+        pts = self._load_points(map_name)
+        p = pts.get(name)
+        if not p:
+            raise DashboardError('没有名为「%s」的点。' % name, 404)
+        self._send_nav_goal(float(p['x']), float(p['y']), float(p.get('yaw', 0.0)),
+                            '前往 %s' % name)
+        return self.status()
+
+    def nav_home(self, payload=None):
+        """回到起点。home_pose 为建图/加载时记录的原点 (0,0,0)。"""
+        self._require_nav_mode()
+        if not self._is_running('nav'):
+            raise DashboardError('导航栈未运行,无法回起点。', 409)
+        with self.lock:
+            home = self.home_pose
+        if home is None:
+            raise DashboardError('未记录起点(尚未建图/加载地图)。', 409)
+        self._send_nav_goal(home[0], home[1], home[2], '正在回到起点')
+        return self.status()
+
+    def cancel_nav(self, payload=None):
+        """取消当前导航目标。"""
+        self._require_nav_mode()
+        handle = self._nav_goal_handle
+        if handle is not None:
+            handle.cancel_goal_async()
+        cruise = self._cruise_goal_handle
+        if cruise is not None:
+            cruise.cancel_goal_async()
+        with self.lock:
+            self.nav_feedback = '已取消导航'
+            if self.nav_state in ('navigating', 'cruising'):
+                self.nav_state = 'localizing' if self.current_map else 'mapping'
+        self.announce('已取消导航')
+        return self.status()
+
+    def cruise(self, payload):
+        """多点巡航:payload {points:[{x,y,yaw?},...]}。车依次到访,经 FollowWaypoints。"""
+        self._require_nav_mode()
+        if not self._is_running('nav'):
+            raise DashboardError('导航栈未运行,请先建图或加载地图。', 409)
+        pts = (payload or {}).get('points') or []
+        if len(pts) < 1:
+            raise DashboardError('巡航点为空,请先在地图上点几个点。', 400)
+        poses = []
+        for i, p in enumerate(pts):
+            try:
+                x = float(p.get('x'))
+                y = float(p.get('y'))
+            except (TypeError, ValueError):
+                raise DashboardError('第 %d 个巡航点坐标无效。' % (i + 1), 400)
+            yaw = float(p.get('yaw', 0.0) or 0.0)
+            ps = PoseStamped()
+            ps.header.frame_id = MAP_FRAME
+            ps.header.stamp = self.get_clock().now().to_msg()
+            ps.pose.position.x = x
+            ps.pose.position.y = y
+            qx, qy, qz, qw = yaw_to_quaternion(yaw)
+            ps.pose.orientation.x = qx
+            ps.pose.orientation.y = qy
+            ps.pose.orientation.z = qz
+            ps.pose.orientation.w = qw
+            poses.append(ps)
+        if not self.cruise_action.wait_for_server(timeout_sec=3.0):
+            raise DashboardError('巡航 action 服务未就绪(nav2 未起齐)。', 503)
+        goal = FollowWaypoints.Goal()
+        goal.poses = poses
+        with self.lock:
+            self.nav_state = 'cruising'
+            self.nav_feedback = '巡航 %d 点:前往第 1 点' % len(poses)
+            self._cruise_total = len(poses)
+        fut = self.cruise_action.send_goal_async(
+            goal, feedback_callback=self._cruise_feedback_cb)
+        fut.add_done_callback(self._cruise_goal_response_cb)
+        self.announce('开始巡航 %d 个点' % len(poses))
+        return self.status()
+
+    def _cruise_goal_response_cb(self, future):
+        handle = future.result()
+        if not handle.accepted:
+            with self.lock:
+                self.nav_feedback = '巡航目标被拒绝'
+                self.nav_state = 'localizing' if self.current_map else 'mapping'
+            return
+        self._cruise_goal_handle = handle
+        handle.get_result_async().add_done_callback(self._cruise_result_cb)
+
+    def _cruise_feedback_cb(self, msg):
+        try:
+            idx = msg.feedback.current_waypoint
+        except AttributeError:
+            return
+        with self.lock:
+            total = getattr(self, '_cruise_total', 0)
+            self.nav_feedback = '巡航中:前往第 %d/%d 点' % (idx + 1, total)
+
+    def _cruise_result_cb(self, future):
+        result = future.result()
+        status = result.status
+        self._cruise_goal_handle = None
+        say = None
+        with self.lock:
+            if status == GoalStatus.STATUS_SUCCEEDED:
+                missed = list(getattr(result.result, 'missed_waypoints', []) or [])
+                self.nav_feedback = ('巡航完成(漏 %d 点)' % len(missed)) if missed else '巡航完成'
+                say = '巡航完成'
+            elif status == GoalStatus.STATUS_CANCELED:
+                self.nav_feedback = '巡航已取消'
+            else:
+                self.nav_feedback = '巡航未完成(状态 %d)' % status
+                say = '巡航没能完成'
+            self.nav_state = 'localizing' if self.current_map else 'mapping'
+        if say:
+            self.announce(say)
 
     def start_notify(self):
         with self.lock:
@@ -1391,11 +1748,13 @@ class DashboardNode(Node):
         self.http_server.server_close()
 
     def force_cleanup_residuals(self, include_lidar=False, include_voice=False,
-                                include_nav=False):
+                                include_nav=False, preserve_rosbridge=False):
         """按进程特征兜底清理残留(孤儿/非本实例起的功能节点)。
         先 SIGTERM 再 SIGKILL 整个进程组。用字符类化的 pattern 避免误杀。
         注意:voice 默认不清(stop_all 不应杀语音助手);仅启动自清/显式停语音时清。
-        nav 残留(cartographer/nav2 各 server/rosbridge/explore)极易留孤儿,停导航时必清。"""
+        nav 残留(cartographer/nav2 各 server/rosbridge/explore)极易留孤儿,停导航时必清。
+        preserve_rosbridge:加载地图等场景下保活 rosbridge,避免浏览器 websocket 断开、
+        重连后错过 map_server 的 latched /map(transient_local)导致画布空白。"""
         patterns = list(RESIDUAL_PATTERNS)
         if include_lidar:
             patterns += LIDAR_PATTERNS
@@ -1403,6 +1762,8 @@ class DashboardNode(Node):
             patterns += VOICE_PATTERNS
         if include_nav:
             patterns += NAV_PATTERNS + LIDAR_PATTERNS
+        if preserve_rosbridge:
+            patterns = [p for p in patterns if p != 'rosbridge_websocket']
         killed = []
         for sig in (signal.SIGTERM, signal.SIGKILL):
             for pat in patterns:
@@ -1464,6 +1825,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self.send_json(self.server.dashboard.get_report_job())
             elif path == '/api/nav/maps':
                 self.send_json(self.server.dashboard.list_maps())
+            elif path == '/api/nav/points':
+                self.send_json(self.server.dashboard.list_points())
             elif path.startswith('/static/'):
                 self.serve_file(path[len('/static/'):])
             else:
@@ -1489,6 +1852,24 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 result = dashboard.save_map(payload)
             elif self.path == '/api/nav/map/load':
                 result = dashboard.load_map(payload)
+            elif self.path == '/api/nav/goto':
+                result = dashboard.goto(payload)
+            elif self.path == '/api/nav/point/save':
+                result = dashboard.save_point(payload)
+            elif self.path == '/api/nav/point/delete':
+                result = dashboard.delete_point(payload)
+            elif self.path == '/api/nav/point/goto':
+                result = dashboard.goto_point(payload)
+            elif self.path == '/api/nav/home':
+                result = dashboard.nav_home(payload)
+            elif self.path == '/api/nav/cancel':
+                result = dashboard.cancel_nav(payload)
+            elif self.path == '/api/nav/initialpose':
+                result = dashboard.set_initial_pose(payload)
+            elif self.path == '/api/nav/speed':
+                result = dashboard.nav_speed(payload)
+            elif self.path == '/api/nav/cruise':
+                result = dashboard.cruise(payload)
             elif self.path == '/api/mode/report':
                 result = dashboard.start_report_mode()
             elif self.path == '/api/core/stop':
@@ -1613,6 +1994,8 @@ def main():
         node.get_logger().info('startup cleanup removed %d residual process(es)' % n)
     except Exception as exc:
         node.get_logger().warn('startup cleanup failed: %s' % exc)
+    # 自清之后再起 core,避免被上面的 cleanup 误杀(car_web_core.launch 在 RESIDUAL_PATTERNS)
+    node.start_core_safe()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

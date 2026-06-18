@@ -31,6 +31,10 @@ FUNCTION_ROUTES = {
     'lidar_off':     ('/api/lidar/stop', None),
     'gen_report':    ('/api/report/generate', None),
     'chassis_reset': ('/api/chassis/reset', None),
+    # ---- 导航类(阶段6)----
+    'enter_nav':     ('/api/uimode', {'mode': 'nav'}),
+    'nav_home':      ('/api/nav/home', None),
+    'nav_cancel':    ('/api/nav/cancel', None),
 }
 
 # camera_move 方向 -> dashboard 端点
@@ -77,10 +81,17 @@ class WebControl(Node):
             r = requests.post(url, json=body, timeout=8)
             ok = (r.status_code == 200)
             self.get_logger().info('POST %s -> %s' % (path, r.status_code))
-            return ok
+            # 失败时尽量取出后端的中文 error,供语音播报具体原因
+            err = None
+            if not ok:
+                try:
+                    err = (r.json() or {}).get('error')
+                except Exception:
+                    err = None
+            return ok, err
         except Exception as exc:
             self.get_logger().warn('POST %s 失败: %s' % (path, exc))
-            return False
+            return False, None
 
     def execute_step(self, step):
         """把一个 LLM step 翻译成 dashboard HTTP 调用。"""
@@ -96,14 +107,26 @@ class WebControl(Node):
             self._post(path)
             return
 
+        # goto_point:LLM 从口语里抽出地点名(如"去客厅"->name=客厅),按名导航。
+        if func == 'goto_point':
+            name = str(params.get('name', '')).strip()
+            if not name:
+                if self.tts_queue is not None:
+                    self.tts_queue.put('你要去哪里呢')
+                return
+            ok, err = self._post('/api/nav/point/goto', {'name': name})
+            if not ok and self.tts_queue is not None:
+                self.tts_queue.put(err or ('没找到%s这个点' % name))
+            return
+
         route = FUNCTION_ROUTES.get(func)
         if route is None:
             self.get_logger().warn('未知 function: %s' % func)
             return
         path, body = route
-        ok = self._post(path, body)
+        ok, err = self._post(path, body)
         if not ok and self.tts_queue is not None:
-            self.tts_queue.put('操作没成功，请稍后再试')
+            self.tts_queue.put(err or '操作没成功，请稍后再试')
 
     def analyze_communication(self, data):
         """兼容 LLMCommandParser 投进来的对象:{'step': {...}} 或裸 step。"""

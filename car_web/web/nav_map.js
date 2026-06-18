@@ -10,6 +10,9 @@
     this.opts = opts || {};
     this.ros = null;
     this.connected = false;
+    this._url = null;            // 末次 connect 的 ws 地址,断线自动重连用
+    this._wantConnected = false; // 期望保持连接;disconnect() 置 false 停止重连
+    this._reconnectTimer = null;
     this.grid = null;        // {res, w, h, ox, oy, data}
     this.robot = null;       // {x, y, yaw}
     this.plan = null;        // [{x,y}...]
@@ -17,14 +20,19 @@
     this.goal = null;        // 最近设定目标 {x,y}
     this.view = { scale: 1, offX: 0, offY: 0 };  // 世界->屏幕
     this._subs = [];
-    this.onClickWorld = null;   // function(x, y){}
+    this.onClickWorld = null;   // function(x, y){}  快速点击(无拖拽,goto)
+    this.onPoseWorld = null;    // function(x, y, yaw){}  按下拖拽设朝向后释放
+    this.clickMode = 'goto';    // 'goto' | 'setpose':决定拖拽释放回调哪个
+    this._drag = null;          // 拖拽中 {x0,y0,x1,y1} 世界坐标,画临时箭头
     this.onStatus = null;       // function(text, bad){}
   }
 
   NavMap.prototype.connect = function (url) {
     var self = this;
-    if (this.ros) { this.disconnect(); }
-    this.ros = new ROSLIB.Ros({ url: url });
+    if (url) { this._url = url; }
+    this._wantConnected = true;
+    if (this.ros) { this._teardownRos(); }
+    this.ros = new ROSLIB.Ros({ url: this._url });
     this.ros.on('connection', function () {
       self.connected = true;
       self._status('已连接地图服务', false);
@@ -37,15 +45,29 @@
     this.ros.on('close', function () {
       self.connected = false;
       self._status('地图服务已断开', true);
+      // rosbridge 重启(如加载地图)或网络抖动会断开;只要仍想连就自动重连,
+      // 重连后 connection 回调会重新 _subscribe,canvas 恢复 /map。
+      if (self._wantConnected) {
+        if (self._reconnectTimer) { clearTimeout(self._reconnectTimer); }
+        self._reconnectTimer = setTimeout(function () {
+          if (self._wantConnected) { self.connect(); }
+        }, 1500);
+      }
     });
   };
 
-  NavMap.prototype.disconnect = function () {
+  NavMap.prototype._teardownRos = function () {
     this._subs.forEach(function (s) { try { s.unsubscribe(); } catch (e) {} });
     this._subs = [];
     if (this.ros) { try { this.ros.close(); } catch (e) {} }
     this.ros = null;
     this.connected = false;
+  };
+
+  NavMap.prototype.disconnect = function () {
+    this._wantConnected = false;
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+    this._teardownRos();
   };
 
   NavMap.prototype._status = function (text, bad) {
@@ -170,16 +192,53 @@
     };
   };
 
-  // 绑定点击:像素->世界坐标,回调 onClickWorld
+  // 绑定交互:按下记起点,拖拽实时画朝向箭头,释放按拖拽方向算 yaw。
+  // 几乎没拖动(<8px)视为快速点击:goto 模式回调 onClickWorld(yaw=0);
+  // setpose 模式则必须拖拽给朝向,释放回调 onPoseWorld(x,y,yaw)。
+  NavMap.prototype._evWorld = function (ev) {
+    var rect = this.canvas.getBoundingClientRect();
+    var sx = (ev.clientX - rect.left) * (this.canvas.width / rect.width);
+    var sy = (ev.clientY - rect.top) * (this.canvas.height / rect.height);
+    return this.screenToWorld(sx, sy);
+  };
+
   NavMap.prototype.bindClick = function () {
     var self = this;
-    this.canvas.addEventListener('click', function (ev) {
+    var downPx = null;
+    this.canvas.addEventListener('mousedown', function (ev) {
       if (!self.grid) { return; }
-      var rect = self.canvas.getBoundingClientRect();
-      var sx = (ev.clientX - rect.left) * (self.canvas.width / rect.width);
-      var sy = (ev.clientY - rect.top) * (self.canvas.height / rect.height);
-      var w = self.screenToWorld(sx, sy);
-      if (self.onClickWorld) { self.onClickWorld(w.x, w.y); }
+      downPx = { x: ev.clientX, y: ev.clientY };
+      var w = self._evWorld(ev);
+      self._drag = { x0: w.x, y0: w.y, x1: w.x, y1: w.y };
+    });
+    this.canvas.addEventListener('mousemove', function (ev) {
+      if (!self._drag) { return; }
+      var w = self._evWorld(ev);
+      self._drag.x1 = w.x; self._drag.y1 = w.y;
+      self.render();
+    });
+    window.addEventListener('mouseup', function (ev) {
+      if (!self._drag) { return; }
+      var d = self._drag; self._drag = null;
+      var moved = downPx ? Math.hypot(ev.clientX - downPx.x, ev.clientY - downPx.y) : 0;
+      var yaw = Math.atan2(d.y1 - d.y0, d.x1 - d.x0);
+      self.render();
+      if (moved < 8) {
+        // 快速点击:goto 用(yaw=0);setpose 模式提示需拖拽
+        if (self.clickMode === 'setpose') {
+          self._status('设初始位姿:按住并拖出朝向再松开', true);
+          return;
+        }
+        if (self.onClickWorld) { self.onClickWorld(d.x0, d.y0); }
+      } else {
+        if (self.clickMode === 'setpose') {
+          if (self.onPoseWorld) { self.onPoseWorld(d.x0, d.y0, yaw); }
+        } else if (self.onClickWorld) {
+          // goto 也支持拖拽给朝向:经 onPoseWorld 若挂了优先,否则退回 onClickWorld
+          if (self.onPoseWorld) { self.onPoseWorld(d.x0, d.y0, yaw); }
+          else { self.onClickWorld(d.x0, d.y0); }
+        }
+      }
     });
   };
 
@@ -198,7 +257,28 @@
     this._drawPlan();
     this._drawWaypoints();
     this._drawGoal();
+    this._drawDrag();
     this._drawRobot();
+  };
+
+  // 拖拽设位姿/目标时的临时朝向箭头(青色)
+  NavMap.prototype._drawDrag = function () {
+    if (!this._drag) { return; }
+    var d = this._drag;
+    var a = this.worldToScreen(d.x0, d.y0);
+    var b = this.worldToScreen(d.x1, d.y1);
+    var ctx = this.ctx;
+    ctx.strokeStyle = '#1abc9c'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(a.sx, a.sy, 7, 0, 2 * Math.PI); ctx.stroke();
+    if (Math.hypot(b.sx - a.sx, b.sy - a.sy) > 6) {
+      ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+      var ang = Math.atan2(b.sy - a.sy, b.sx - a.sx);
+      ctx.beginPath(); ctx.moveTo(b.sx, b.sy);
+      ctx.lineTo(b.sx - 10 * Math.cos(ang - 0.4), b.sy - 10 * Math.sin(ang - 0.4));
+      ctx.moveTo(b.sx, b.sy);
+      ctx.lineTo(b.sx - 10 * Math.cos(ang + 0.4), b.sy - 10 * Math.sin(ang + 0.4));
+      ctx.stroke();
+    }
   };
 
   // 把 OccupancyGrid 画成像素块。-1 未知=深灰,0 空闲=白,100 占用=黑。

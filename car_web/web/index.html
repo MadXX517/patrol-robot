@@ -52,6 +52,15 @@
     </section>
 
     <section class="control-panel">
+      <div class="panel" id="voicePanel">
+        <h2>语音</h2>
+        <p class="hint compact" id="voiceState">语音:播报关 / 触发关</p>
+        <div class="button-row grid-two compact">
+          <button id="voiceTtsToggleBtn" class="btn">开启语音播报</button>
+          <button id="voiceAsrToggleBtn" class="btn">开启语音触发</button>
+        </div>
+      </div>
+
       <div id="followGroup" class="panel-group">
       <div class="panel">
         <h2>模式</h2>
@@ -140,11 +149,6 @@
         <div class="button-row grid-two compact">
           <button id="lidarToggleBtn" class="btn">开启雷达</button>
         </div>
-        <p class="hint compact" id="voiceState">语音:播报关 / 触发关</p>
-        <div class="button-row grid-two compact">
-          <button id="voiceTtsToggleBtn" class="btn">开启语音播报</button>
-          <button id="voiceAsrToggleBtn" class="btn">开启语音触发</button>
-        </div>
       </div>
 
       <div class="panel">
@@ -174,6 +178,37 @@
             <button id="exploreStopBtn" class="btn">停止自动探索</button>
             <button id="navStopBtn" class="btn danger">停止导航栈</button>
           </div>
+        </div>
+
+        <div class="panel">
+          <h2>自主导航</h2>
+          <p class="hint compact">点地图设导航目标(可按住拖出朝向)。先用"设初始位姿"校准定位。</p>
+          <div class="button-row grid-two compact">
+            <button id="setPoseBtn" class="btn">设初始位姿</button>
+            <button id="navHomeBtn" class="btn primary">回到起点</button>
+          </div>
+          <div class="button-row compact">
+            <button id="navCancelBtn" class="btn danger">取消导航</button>
+          </div>
+          <div class="speed-row compact">
+            <span id="navSpeed" class="speed-label">导航限速:-</span>
+            <button id="navSlowerBtn" class="btn">减速</button>
+            <button id="navFasterBtn" class="btn">加速</button>
+          </div>
+          <p class="hint compact">多点巡航:开"巡航打点"后逐个点地图排路线,再"开始巡航"车依次到访。</p>
+          <div class="button-row grid-two compact">
+            <button id="cruiseModeBtn" class="btn">巡航打点</button>
+            <button id="cruiseClearBtn" class="btn">清空点</button>
+          </div>
+          <div class="button-row compact">
+            <button id="cruiseStartBtn" class="btn primary">开始巡航 (<span id="cruiseCount">0</span> 点)</button>
+          </div>
+          <p class="hint compact">命名点:把车开到某处,输入名字"存当前位置",之后可一键或语音"去xxx"。</p>
+          <div class="point-save-row compact">
+            <input id="pointNameInput" class="text-input" type="text" placeholder="点名,如 客厅" maxlength="20">
+            <button id="pointSaveBtn" class="btn">存当前位置</button>
+          </div>
+          <ul id="pointList" class="point-list"></ul>
         </div>
 
         <div class="panel">

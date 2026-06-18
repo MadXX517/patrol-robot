@@ -11,7 +11,17 @@ const api = {
   exploreStop: '/api/nav/explore/stop',
   mapSave: '/api/nav/map/save',
   mapLoad: '/api/nav/map/load',
+  navGoto: '/api/nav/goto',
+  navHome: '/api/nav/home',
+  navCancel: '/api/nav/cancel',
+  navInitialPose: '/api/nav/initialpose',
+  navSpeed: '/api/nav/speed',
+  navCruise: '/api/nav/cruise',
   mapsList: '/api/nav/maps',
+  pointsList: '/api/nav/points',
+  pointSave: '/api/nav/point/save',
+  pointDelete: '/api/nav/point/delete',
+  pointGoto: '/api/nav/point/goto',
   manual: '/api/mode/manual',
   report: '/api/mode/report',
   coreStop: '/api/core/stop',
@@ -50,6 +60,7 @@ const state = {
   selectedFeatureId: '',
   activeFeature: '',
   uiMode: 'follow',
+  pendingUiMode: null,   // 切换进行中目标模式;轮询期间不让后端旧状态覆盖乐观 UI
   navMap: null,
   videoFailed: false,
   manualTopic: null,   // 非空=用户手动选了流,不再被后端自动 topic 覆盖
@@ -110,6 +121,16 @@ const els = {
   navGroup: document.getElementById('navGroup'),
   navState: document.getElementById('navState'),
   navStopBtn: document.getElementById('navStopBtn'),
+  navHomeBtn: document.getElementById('navHomeBtn'),
+  navCancelBtn: document.getElementById('navCancelBtn'),
+  setPoseBtn: document.getElementById('setPoseBtn'),
+  navSpeed: document.getElementById('navSpeed'),
+  navFasterBtn: document.getElementById('navFasterBtn'),
+  navSlowerBtn: document.getElementById('navSlowerBtn'),
+  cruiseModeBtn: document.getElementById('cruiseModeBtn'),
+  cruiseClearBtn: document.getElementById('cruiseClearBtn'),
+  cruiseStartBtn: document.getElementById('cruiseStartBtn'),
+  cruiseCount: document.getElementById('cruiseCount'),
   navCanvas: document.getElementById('navCanvas'),
   mapManualBtn: document.getElementById('mapManualBtn'),
   mapExploreBtn: document.getElementById('mapExploreBtn'),
@@ -118,6 +139,9 @@ const els = {
   mapSaveBtn: document.getElementById('mapSaveBtn'),
   mapRefreshBtn: document.getElementById('mapRefreshBtn'),
   mapList: document.getElementById('mapList'),
+  pointNameInput: document.getElementById('pointNameInput'),
+  pointSaveBtn: document.getElementById('pointSaveBtn'),
+  pointList: document.getElementById('pointList'),
   followSpeed: document.getElementById('followSpeed'),
   followFasterBtn: document.getElementById('followFasterBtn'),
   followSlowerBtn: document.getElementById('followSlowerBtn'),
@@ -306,6 +330,30 @@ function renderGestureState(raw) {
   }
 }
 
+function setPoseMode(on) {
+  const nm = state.navMap;
+  if (!nm) { return; }
+  // 先清掉巡航高亮(不动 clickMode),再设本模式,避免互斥 helper 把 clickMode 覆盖回 goto
+  if (on && els.cruiseModeBtn) els.cruiseModeBtn.classList.remove('active');
+  nm.clickMode = on ? 'setpose' : 'goto';
+  if (els.setPoseBtn) els.setPoseBtn.classList.toggle('active', on);
+  setStatus(on ? '设初始位姿:在车的真实位置按住并拖出朝向' : '导航模式:点地图设目标', false);
+}
+
+function cruiseMode(on) {
+  const nm = state.navMap;
+  if (!nm) { return; }
+  if (on && els.setPoseBtn) els.setPoseBtn.classList.remove('active');
+  nm.clickMode = on ? 'cruise' : 'goto';
+  if (els.cruiseModeBtn) els.cruiseModeBtn.classList.toggle('active', on);
+  setStatus(on ? '巡航打点:逐个点地图排路线,再"开始巡航"' : '导航模式:点地图设目标', false);
+}
+
+function updateCruiseCount() {
+  const n = (state.navMap && state.navMap.waypoints) ? state.navMap.waypoints.length : 0;
+  if (els.cruiseCount) els.cruiseCount.textContent = String(n);
+}
+
 function ensureNavMap() {
   if (state.navMap || !window.NavMap || !els.navCanvas) { return state.navMap; }
   const nm = new NavMap(els.navCanvas, {});
@@ -315,8 +363,33 @@ function ensureNavMap() {
     }
   };
   nm.onClickWorld = (x, y) => {
-    // 阶段4 接入设目标;此处先提示坐标
-    setStatus(`地图点击:x=${x.toFixed(2)} y=${y.toFixed(2)}(导航阶段接入)`, false);
+    if (state.uiMode !== 'nav') { return; }
+    if (nm.clickMode === 'cruise') {
+      nm.waypoints.push({ x, y });
+      nm.render();
+      updateCruiseCount();
+      setStatus(`巡航点 ${nm.waypoints.length}:(${x.toFixed(2)}, ${y.toFixed(2)})`, false);
+      return;
+    }
+    postAndRefresh(api.navGoto, { x, y, yaw: 0 });
+    setStatus(`导航目标:x=${x.toFixed(2)} y=${y.toFixed(2)}`, false);
+  };
+  nm.onPoseWorld = (x, y, yaw) => {
+    if (state.uiMode !== 'nav') { return; }
+    const deg = (yaw * 180 / Math.PI).toFixed(0);
+    if (nm.clickMode === 'setpose') {
+      postAndRefresh(api.navInitialPose, { x, y, yaw });
+      setStatus(`设初始位姿:(${x.toFixed(2)}, ${y.toFixed(2)}) ${deg}°`, false);
+      setPoseMode(false);  // 设完自动退出,回到导航点击
+    } else if (nm.clickMode === 'cruise') {
+      nm.waypoints.push({ x, y, yaw });
+      nm.render();
+      updateCruiseCount();
+      setStatus(`巡航点 ${nm.waypoints.length}:(${x.toFixed(2)}, ${y.toFixed(2)}) ${deg}°`, false);
+    } else {
+      postAndRefresh(api.navGoto, { x, y, yaw });
+      setStatus(`导航目标:(${x.toFixed(2)}, ${y.toFixed(2)}) ${deg}°`, false);
+    }
   };
   nm.bindClick();
   state.navMap = nm;
@@ -364,6 +437,12 @@ function applyUiMode(mode) {
 
 function renderUiMode(data) {
   const mode = data.ui_mode || 'follow';
+  // 切换进行中(pendingUiMode):忽略后端尚未更新的旧 ui_mode,避免乐观 UI 被轮询打回造成跳变。
+  // 后端报到目标模式后清除挂起标记。
+  if (state.pendingUiMode) {
+    if (mode === state.pendingUiMode) { state.pendingUiMode = null; }
+    else { return; }
+  }
   if (mode !== state.uiMode) {
     applyUiMode(mode);
   }
@@ -373,18 +452,27 @@ function renderUiMode(data) {
       idle: '空闲', mapping: '建图中', exploring: '自动探索中',
       localizing: '定位中', navigating: '导航中', cruising: '巡航中',
     }[ns] || ns;
-    els.navState.textContent = `导航:${label}${data.nav_feedback ? ' · ' + data.nav_feedback : ''}`;
+    const mapPart = data.current_map ? ` · 地图:${data.current_map}` : '';
+    els.navState.textContent = `导航:${label}${mapPart}${data.nav_feedback ? ' · ' + data.nav_feedback : ''}`;
+  }
+  if (els.navSpeed) {
+    const sc = data.nav_speed_scale;
+    els.navSpeed.textContent = (sc === undefined || sc === null)
+      ? '导航限速:-' : `导航限速:×${Number(sc).toFixed(1)} (${(0.18 * sc).toFixed(2)} m/s)`;
   }
 }
 
 async function setUiMode(mode) {
-  // 乐观切 UI,后端编排(停跟随/起导航栈)可能耗时
+  // 乐观切 UI,后端编排(停跟随/起导航栈)可能耗时。pendingUiMode 防止这期间
+  // 1.5s 轮询拿到后端旧 ui_mode 把 UI 打回(跳变 bug)。
+  state.pendingUiMode = mode;
   applyUiMode(mode);
   try {
     await request(api.uimode, { method: 'POST', body: { mode } });
     await refreshStatus();
-    if (mode === 'nav') { refreshMapList(); }
+    if (mode === 'nav') { refreshMapList(); refreshPointList(); }
   } catch (error) {
+    state.pendingUiMode = null;
     setStatus(`切换模式失败：${error.message}`, true);
   }
 }
@@ -419,8 +507,70 @@ async function loadMap(name) {
     await request(api.mapLoad, { method: 'POST', body: { name } });
     await refreshStatus();
     refreshMapList();
+    refreshPointList();
   } catch (error) {
     setStatus(`加载地图失败：${error.message}`, true);
+  }
+}
+
+async function refreshPointList() {
+  if (!els.pointList) { return; }
+  try {
+    const data = await request(api.pointsList);
+    renderPointList(data.points || []);
+  } catch (error) {
+    els.pointList.innerHTML = '';
+  }
+}
+
+function renderPointList(points) {
+  if (!points.length) {
+    els.pointList.innerHTML = `<li class="empty-state">暂无命名点</li>`;
+    return;
+  }
+  els.pointList.innerHTML = points.map((p) => {
+    const n = escapeHtml(p.name);
+    return `<li><span class="point-name" data-pt="${n}" title="点此前往 ${n}">${n}</span>`
+      + `<button class="point-del" data-pt="${n}" title="删除">×</button></li>`;
+  }).join('');
+  els.pointList.querySelectorAll('.point-name').forEach((el) => {
+    el.addEventListener('click', () => gotoPoint(el.dataset.pt));
+  });
+  els.pointList.querySelectorAll('.point-del').forEach((el) => {
+    el.addEventListener('click', () => deletePoint(el.dataset.pt));
+  });
+}
+
+async function savePoint() {
+  const name = (els.pointNameInput.value || '').trim();
+  if (!name) { setStatus('请先输入点名', true); return; }
+  try {
+    const data = await request(api.pointSave, { method: 'POST', body: { name } });
+    els.pointNameInput.value = '';
+    renderPointList(data.points || []);
+    setStatus(`已存点:${name}`, false);
+  } catch (error) {
+    setStatus(`存点失败：${error.message}`, true);
+  }
+}
+
+async function gotoPoint(name) {
+  try {
+    await request(api.pointGoto, { method: 'POST', body: { name } });
+    await refreshStatus();
+    setStatus(`前往 ${name}`, false);
+  } catch (error) {
+    setStatus(`前往失败：${error.message}`, true);
+  }
+}
+
+async function deletePoint(name) {
+  if (!confirm(`删除命名点「${name}」?`)) { return; }
+  try {
+    const data = await request(api.pointDelete, { method: 'POST', body: { name } });
+    renderPointList(data.points || []);
+  } catch (error) {
+    setStatus(`删除失败：${error.message}`, true);
   }
 }
 
@@ -703,11 +853,36 @@ function bindControls() {
   if (els.uiModeFollowBtn) els.uiModeFollowBtn.addEventListener('click', () => setUiMode('follow'));
   if (els.uiModeNavBtn) els.uiModeNavBtn.addEventListener('click', () => setUiMode('nav'));
   if (els.navStopBtn) els.navStopBtn.addEventListener('click', () => postAndRefresh(api.navStop));
+  if (els.navHomeBtn) els.navHomeBtn.addEventListener('click', () => postAndRefresh(api.navHome));
+  if (els.setPoseBtn) els.setPoseBtn.addEventListener('click', () => { ensureNavMap(); setPoseMode(state.navMap && state.navMap.clickMode !== 'setpose'); });
+  if (els.navFasterBtn) els.navFasterBtn.addEventListener('click', () => postAndRefresh(api.navSpeed, { action: 'up' }));
+  if (els.navSlowerBtn) els.navSlowerBtn.addEventListener('click', () => postAndRefresh(api.navSpeed, { action: 'down' }));
+  if (els.cruiseModeBtn) els.cruiseModeBtn.addEventListener('click', () => { ensureNavMap(); cruiseMode(state.navMap && state.navMap.clickMode !== 'cruise'); });
+  if (els.cruiseClearBtn) els.cruiseClearBtn.addEventListener('click', () => {
+    const nm = ensureNavMap();
+    if (nm) { nm.waypoints = []; nm.render(); updateCruiseCount(); setStatus('已清空巡航点', false); }
+  });
+  if (els.cruiseStartBtn) els.cruiseStartBtn.addEventListener('click', async () => {
+    const nm = ensureNavMap();
+    const pts = (nm && nm.waypoints) ? nm.waypoints.slice() : [];
+    if (!pts.length) { setStatus('请先在地图上点几个巡航点', true); return; }
+    cruiseMode(false);
+    try {
+      await request(api.navCruise, { method: 'POST', body: { points: pts } });
+      await refreshStatus();
+      setStatus(`开始巡航 ${pts.length} 点`, false);
+    } catch (error) {
+      setStatus(`巡航失败:${error.message}`, true);
+    }
+  });
+  if (els.navCancelBtn) els.navCancelBtn.addEventListener('click', () => postAndRefresh(api.navCancel));
   if (els.mapManualBtn) els.mapManualBtn.addEventListener('click', () => postAndRefresh(api.mappingStart, { explore: false }));
   if (els.mapExploreBtn) els.mapExploreBtn.addEventListener('click', () => postAndRefresh(api.mappingStart, { explore: true }));
   if (els.exploreStopBtn) els.exploreStopBtn.addEventListener('click', () => postAndRefresh(api.exploreStop));
   if (els.mapSaveBtn) els.mapSaveBtn.addEventListener('click', () => saveMap());
   if (els.mapRefreshBtn) els.mapRefreshBtn.addEventListener('click', () => refreshMapList());
+  if (els.pointSaveBtn) els.pointSaveBtn.addEventListener('click', () => savePoint());
+  if (els.pointNameInput) els.pointNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') savePoint(); });
   els.coreStopBtn.addEventListener('click', () => postAndRefresh(api.coreStop));
   els.reportBtn.addEventListener('click', () => postAndRefresh(api.report));
   els.reportStopBtn.addEventListener('click', () => postAndRefresh(api.reportStop));
