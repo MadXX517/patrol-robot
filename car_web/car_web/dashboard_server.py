@@ -478,6 +478,8 @@ class DashboardNode(Node):
         self.publish_patrol_command('stop')
         self.stop_process('follow')
         self.publish_stop()
+        # 跟随专用的避障雷达随跟随一起停(雷达=跟随起、跟随停,避免空转耗电)
+        self.stop_lidar()
         with self.lock:
             self.current_video_topic = CAMERA_TOPIC
             self.current_mode = 'manual' if self._is_running('core') else 'idle'

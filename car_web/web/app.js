@@ -39,8 +39,6 @@ const api = {
   patrolSpeed: '/api/patrol/speed',
   gestureStart: '/api/gesture/start',
   gestureStop: '/api/gesture/stop',
-  lidarStart: '/api/lidar/start',
-  lidarStop: '/api/lidar/stop',
   voiceTtsStart: '/api/voice/tts/start',
   voiceTtsStop: '/api/voice/tts/stop',
   voiceAsrStart: '/api/voice/asr/start',
@@ -105,7 +103,6 @@ const els = {
   patrolTrackBtn: document.getElementById('patrolTrackBtn'),
   patrolStopBtn: document.getElementById('patrolStopBtn'),
   gestureToggleBtn: document.getElementById('gestureToggleBtn'),
-  lidarToggleBtn: document.getElementById('lidarToggleBtn'),
   voiceTtsToggleBtn: document.getElementById('voiceTtsToggleBtn'),
   voiceAsrToggleBtn: document.getElementById('voiceAsrToggleBtn'),
   voiceState: document.getElementById('voiceState'),
@@ -225,11 +222,6 @@ function updateButtons(processes) {
     els.gestureToggleBtn.textContent = gestureRunning ? '停止手势控制' : '开启手势控制';
     els.gestureToggleBtn.classList.toggle('primary', !gestureRunning);
     els.gestureToggleBtn.classList.toggle('danger', gestureRunning);
-  }
-  const lidarRunning = !!(processes.lidar && processes.lidar.running);
-  if (els.lidarToggleBtn) {
-    els.lidarToggleBtn.textContent = lidarRunning ? '停止雷达' : '开启雷达';
-    els.lidarToggleBtn.classList.toggle('danger', lidarRunning);
   }
   updateFeatureDetailButtons();
 }
@@ -934,12 +926,6 @@ function bindControls() {
     els.gestureToggleBtn.addEventListener('click', () => {
       const running = els.gestureToggleBtn.textContent.includes('停止');
       postAndRefresh(running ? api.gestureStop : api.gestureStart);
-    });
-  }
-  if (els.lidarToggleBtn) {
-    els.lidarToggleBtn.addEventListener('click', () => {
-      const running = els.lidarToggleBtn.textContent.includes('停止');
-      postAndRefresh(running ? api.lidarStop : api.lidarStart);
     });
   }
   if (els.voiceTtsToggleBtn) {
