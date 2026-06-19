@@ -43,6 +43,8 @@ const api = {
   voiceTtsStop: '/api/voice/tts/stop',
   voiceAsrStart: '/api/voice/asr/start',
   voiceAsrStop: '/api/voice/asr/stop',
+  voiceParams: '/api/voice/params',
+  voiceSpeak: '/api/voice/speak',
   generateReport: '/api/report/generate',
 };
 
@@ -106,6 +108,12 @@ const els = {
   voiceTtsToggleBtn: document.getElementById('voiceTtsToggleBtn'),
   voiceAsrToggleBtn: document.getElementById('voiceAsrToggleBtn'),
   voiceState: document.getElementById('voiceState'),
+  voiceSelect: document.getElementById('voiceSelect'),
+  voiceVolume: document.getElementById('voiceVolume'),
+  voiceVolVal: document.getElementById('voiceVolVal'),
+  voiceTextInput: document.getElementById('voiceTextInput'),
+  voiceSpeakBtn: document.getElementById('voiceSpeakBtn'),
+  voicePhrases: document.getElementById('voicePhrases'),
   patrolState: document.getElementById('patrolState'),
   uiModeFollowBtn: document.getElementById('uiModeFollowBtn'),
   uiModeNavBtn: document.getElementById('uiModeNavBtn'),
@@ -226,6 +234,62 @@ function updateButtons(processes) {
   updateFeatureDetailButtons();
 }
 
+// 音色显示名(参数值 -> 中文名)。
+const VOICE_LABELS = {
+  Serena: '苏瑶(女)', Neil: '阿闻(男·播音)', Cherry: '芊悦(女)',
+  Ethan: '晨煦(男)', Chelsie: '千雪(女)', Dylan: '北京·晓东',
+  Jada: '上海·阿珍', Sunny: '四川·晴儿',
+};
+// 巡逻场景常用播报语。
+const VOICE_PHRASES = [
+  '正在巡逻,请注意安全',
+  '前方车辆请让行',
+  '发现可疑情况,请配合检查',
+  '警戒区域,禁止入内',
+];
+let voiceUiInited = false;
+
+function speakVoiceText(text) {
+  const t = (text || '').trim();
+  if (!t) return;
+  postAndRefresh(api.voiceSpeak, { text: t });
+}
+
+function initVoiceControls() {
+  if (voiceUiInited) return;
+  voiceUiInited = true;
+  if (els.voiceSelect) {
+    els.voiceSelect.addEventListener('change', () => {
+      postAndRefresh(api.voiceParams, { voice: els.voiceSelect.value });
+    });
+  }
+  if (els.voiceVolume) {
+    // 拖动时只更新数字,松手(change)才发请求,避免刷屏。
+    els.voiceVolume.addEventListener('input', () => {
+      if (els.voiceVolVal) els.voiceVolVal.textContent = els.voiceVolume.value;
+    });
+    els.voiceVolume.addEventListener('change', () => {
+      postAndRefresh(api.voiceParams, { volume: Number(els.voiceVolume.value) });
+    });
+  }
+  if (els.voiceSpeakBtn && els.voiceTextInput) {
+    els.voiceSpeakBtn.addEventListener('click', () => {
+      speakVoiceText(els.voiceTextInput.value);
+      els.voiceTextInput.value = '';
+    });
+    els.voiceTextInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { speakVoiceText(els.voiceTextInput.value); els.voiceTextInput.value = ''; }
+    });
+  }
+  if (els.voicePhrases) {
+    els.voicePhrases.innerHTML = VOICE_PHRASES
+      .map((p, i) => `<button class="btn phrase-btn" data-phrase="${i}">${p}</button>`).join('');
+    els.voicePhrases.querySelectorAll('[data-phrase]').forEach((btn) => {
+      btn.addEventListener('click', () => speakVoiceText(VOICE_PHRASES[Number(btn.dataset.phrase)]));
+    });
+  }
+}
+
 function renderVoiceState(data) {
   const ttsOn = !!data.tts_on;
   const asrOn = !!data.asr_on;
@@ -241,6 +305,19 @@ function renderVoiceState(data) {
   }
   if (els.voiceState) {
     els.voiceState.textContent = `语音:播报${ttsOn ? '开' : '关'} / 触发${asrOn ? '开' : '关'}`;
+  }
+  // 音色下拉首次按后端给的列表填充,之后只回填当前值(不打断用户正在选)。
+  if (els.voiceSelect && Array.isArray(data.tts_voices) && !els.voiceSelect.options.length) {
+    els.voiceSelect.innerHTML = data.tts_voices
+      .map((v) => `<option value="${v}">${VOICE_LABELS[v] || v}</option>`).join('');
+  }
+  if (els.voiceSelect && data.tts_voice && document.activeElement !== els.voiceSelect) {
+    els.voiceSelect.value = data.tts_voice;
+  }
+  if (els.voiceVolume && typeof data.tts_volume === 'number'
+      && document.activeElement !== els.voiceVolume) {
+    els.voiceVolume.value = data.tts_volume;
+    if (els.voiceVolVal) els.voiceVolVal.textContent = data.tts_volume;
   }
 }
 
@@ -727,8 +804,14 @@ function renderEvents(events) {
     const name = event.class_name || event.event_type || '事件';
     const score = typeof event.score === 'number' ? event.score.toFixed(2) : '未记录';
     const time = event.time || '';
-    const image = event.image_path || '无截图';
     const bbox = Array.isArray(event.bbox) ? event.bbox.join(', ') : '无';
+    const imgPath = event.image_path || '';
+    const imgHtml = imgPath
+      ? `<img class="event-thumb" src="/api/event/image?path=${encodeURIComponent(imgPath)}"
+           alt="${escapeHtml(name)}" loading="lazy"
+           onclick="window.open(this.src,'_blank')"
+           onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'event-meta',textContent:'截图加载失败'}))">`
+      : '<div class="event-meta">无截图</div>';
     return `
       <div class="event-item">
         <div class="event-main">
@@ -736,7 +819,7 @@ function renderEvents(events) {
           <span>${escapeHtml(score)}</span>
         </div>
         <div class="event-meta">${escapeHtml(time)} | bbox: ${escapeHtml(bbox)}</div>
-        <div class="event-meta">${escapeHtml(image)}</div>
+        ${imgHtml}
       </div>
     `;
   }).join('');
@@ -827,6 +910,13 @@ async function stopDrive() {
 const JOY_MAX_LINEAR = 0.2;
 const JOY_MAX_ANGULAR = 1.0;
 const JOY_MAX_LATERAL = 0.2;
+// 横向(转向/横移)死区:|nx| 小于此值视为 0,避免前进时手抖误触转弯。
+// 跨过死区后线性重映射回 0→1,保证满行程仍能到最大角速度。
+const JOY_SIDE_DEADZONE = 0.3;
+// 转向角速度下限,必须与后端 dashboard_server min_angular_speed 对齐(0.35)。
+// 电机 <0.35rad/s 落入 PWM 死区走停抖动,故 0→0.35 物理上无法线性;
+// 跨过死区即从此值起步、线性长到上限,避免后端把小角速度踏平成 0.35 台阶。
+const JOY_MIN_ANGULAR = 0.35;
 
 function initJoystick(wrap) {
   const pad = wrap.querySelector('.joystick-pad');
@@ -847,9 +937,18 @@ function initJoystick(wrap) {
   const send = (nx, ny) => {
     const speed = (speedInput ? Number(speedInput.value) : 50) / 100;
     const linear = -ny * JOY_MAX_LINEAR * speed;     // 上(屏幕-y)=前进
-    const side = -nx * speed;                        // 左(屏幕-x)=左转/左移(ROS +)
-    if (ctx.mode === 'strafe') startDrive(linear, 0, side * JOY_MAX_LATERAL);
-    else startDrive(linear, side * JOY_MAX_ANGULAR, 0);
+    // 横向死区:|nx|<死区→0;超过后线性重映射回 0→1(sideMag),保号到 sign。
+    let sideMag = Math.max(0, (Math.abs(nx) - JOY_SIDE_DEADZONE) / (1 - JOY_SIDE_DEADZONE));
+    const sign = -Math.sign(nx);                     // 左(屏幕-x)=左转/左移(ROS +)
+    if (ctx.mode === 'strafe') {
+      // 横移无电机死区,纯线性。
+      startDrive(linear, 0, sign * sideMag * JOY_MAX_LATERAL * speed);
+    } else {
+      // 转向:跨过死区即从 MIN 起步、线性长到 MAX*speed(下限不低于 MIN),消除 0.35 台阶。
+      const angMax = Math.max(JOY_MIN_ANGULAR, JOY_MAX_ANGULAR * speed);
+      const angular = sideMag > 0 ? sign * (JOY_MIN_ANGULAR + sideMag * (angMax - JOY_MIN_ANGULAR)) : 0;
+      startDrive(linear, angular, 0);
+    }
   };
 
   const onMove = (event) => {
@@ -998,6 +1097,7 @@ function bindControls() {
       postAndRefresh(on ? api.voiceAsrStop : api.voiceAsrStart);
     });
   }
+  initVoiceControls();
   document.querySelectorAll('[data-joystick]').forEach(initJoystick);
 
   els.videoStream.addEventListener('load', () => {

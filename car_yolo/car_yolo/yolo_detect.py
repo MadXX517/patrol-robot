@@ -40,6 +40,9 @@ class YoloV5Ros2(Node):
 
         self.declare_parameter("class_names", "", ParameterDescriptor(
             name="class_names", description="Comma-separated class names for RKNN output"))
+        self.declare_parameter("draw_classes", "", ParameterDescriptor(
+            name="draw_classes",
+            description="Comma-separated class names to draw on result_img; empty means draw all"))
 
         self.declare_parameter("img_size", 640, ParameterDescriptor(
             name="img_size", description="YOLO RKNN input size"))
@@ -91,6 +94,11 @@ class YoloV5Ros2(Node):
 
         self.show_result = self.get_parameter('show_result').value
         self.pub_result_img = self.get_parameter('pub_result_img').value
+        # 只在 result_img 上画白名单类别的框(空=全画)。检测结果仍全部发布,由下游过滤。
+        self.draw_classes = {
+            c.strip().lower() for c in
+            str(self.get_parameter('draw_classes').value or '').split(',') if c.strip()
+        }
         self.display_width = int(self.get_parameter('display_width').value)
         self.display_height = int(self.get_parameter('display_height').value)
 
@@ -205,8 +213,10 @@ class YoloV5Ros2(Node):
             detection2d.results.append(obj_pose)
             self.result_msg.detections.append(detection2d)
 
-            # Draw results.
-            if self.show_result or self.pub_result_img:
+            # Draw results. 只画白名单类别(draw_classes 为空则全画)。
+            if (self.show_result or self.pub_result_img) and (
+                not self.draw_classes or name.lower() in self.draw_classes
+            ):
                 cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(image, f"{name}:{obj_pose.hypothesis.score:.2f}", (x1, y1),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)

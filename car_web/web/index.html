@@ -59,6 +59,21 @@
           <button id="voiceTtsToggleBtn" class="btn">开启语音播报</button>
           <button id="voiceAsrToggleBtn" class="btn">开启语音触发</button>
         </div>
+        <div class="voice-params compact">
+          <label class="voice-field">
+            <span class="voice-field-label">音色</span>
+            <select id="voiceSelect"></select>
+          </label>
+          <label class="voice-field">
+            <span class="voice-field-label">音量 <span id="voiceVolVal">90</span>%</span>
+            <input id="voiceVolume" type="range" min="0" max="100" step="5" value="90">
+          </label>
+        </div>
+        <div class="voice-speak compact">
+          <input id="voiceTextInput" type="text" maxlength="200" placeholder="输入要播报的内容">
+          <button id="voiceSpeakBtn" class="btn primary">播报</button>
+        </div>
+        <div id="voicePhrases" class="voice-phrases compact"></div>
       </div>
 
       <div id="followGroup" class="panel-group">

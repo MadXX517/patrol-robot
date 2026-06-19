@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
@@ -29,6 +29,8 @@ import tf2_ros
 CAMERA_TOPIC = '/camera/color/image_raw'
 RESULT_TOPIC = '/result_img'
 EVENT_TOPIC = '/car_report/event'
+# 语音栏可选音色(qwen-tts);白名单用于校验 set_voice_params。
+TTS_VOICES = ['Serena', 'Neil', 'Cherry', 'Ethan', 'Chelsie', 'Dylan', 'Jada', 'Sunny']
 CMD_VEL_TOPIC = '/cmd_vel'
 WEB_VIDEO_PORT = 8080
 IK_TOPIC = '/ik_states'
@@ -196,6 +198,8 @@ class DashboardNode(Node):
         self.lidar_on = False             # 雷达独立开关(供 follow 避障)
         self.tts_on = False               # 语音播报开关
         self.asr_on = False               # 语音触发(麦克风聆听)开关
+        self.tts_voice = 'Serena'         # 当前音色(qwen-tts)
+        self.tts_volume = 90              # 当前播报音量 0-100
         # 播报去抖状态
         self._last_announce = {}          # key -> 单调时间戳
         self._battery_warned = False      # 电量低只播一次,回升复位
@@ -429,6 +433,9 @@ class DashboardNode(Node):
                 'lidar_on': self.lidar_on,
                 'tts_on': self.tts_on,
                 'asr_on': self.asr_on,
+                'tts_voice': self.tts_voice,
+                'tts_volume': self.tts_volume,
+                'tts_voices': TTS_VOICES,
                 'battery': self.battery_info(),
             }
 
@@ -664,6 +671,44 @@ class DashboardNode(Node):
             self._publish_voice_control('%s_%s' % (which, 'on' if on else 'off'))
         if stop_proc:
             self.stop_process('voice')
+        return self.status()
+
+    def set_voice_params(self, payload):
+        """切换音色 / 音量。存为权威状态(供进程重启沿用),进程在跑则实时下发。"""
+        voice = payload.get('voice')
+        volume = payload.get('volume')
+        with self.lock:
+            if voice is not None:
+                if voice not in TTS_VOICES:
+                    raise DashboardError('未知音色:%s' % voice)
+                self.tts_voice = voice
+            if volume is not None:
+                try:
+                    self.tts_volume = max(0, min(100, int(volume)))
+                except (TypeError, ValueError):
+                    raise DashboardError('音量必须是 0-100 的整数')
+            v_voice, v_volume = self.tts_voice, self.tts_volume
+        if self._is_running('voice'):
+            if voice is not None:
+                self._publish_voice_control('voice:%s' % v_voice)
+            if volume is not None:
+                self._publish_voice_control('volume:%d' % v_volume)
+        return self.status()
+
+    def speak_text(self, payload):
+        """播报一段自定义/常用文本。确保播报已开(没开就开),保证用户点了一定出声。"""
+        text = str(payload.get('text', '')).strip()
+        if not text:
+            raise DashboardError('播报内容不能为空')
+        if len(text) > 200:
+            text = text[:200]
+        with self.lock:
+            need_on = not self.tts_on
+        if need_on:
+            self.set_voice_toggle('tts', True)  # 拉起进程或开播报开关
+        elif not self._is_running('voice'):
+            self.start_process('voice', self.voice_command())
+        self.announce(text)
         return self.status()
 
     def _announce_patrol_transition(self, state):
@@ -1540,6 +1585,9 @@ class DashboardNode(Node):
         command = ['ros2', 'run', 'car_report', 'report_generator', '--mode', mode]
         if mode == 'vision':
             command.extend(['--max-images', str(int(payload.get('max_images', 3)))])
+        # 仅当钉钉通知(notify)在运行时,才把生成的文本报告也发到钉钉,尊重用户开关。
+        if self._is_running('notify'):
+            command.append('--send-dingtalk')
 
         thread = threading.Thread(
             target=self._run_report_job,
@@ -1621,9 +1669,13 @@ class DashboardNode(Node):
     def lidar_command():
         return ['ros2', 'launch', 'car_base', 'car_lidar.launch.py']
 
-    @staticmethod
-    def voice_command():
-        return ['ros2', 'launch', 'car_voice', 'voice.launch.py']
+    def voice_command(self):
+        # 带上当前音色/音量,使(重)启动的语音进程沿用网页上的选择。
+        return [
+            'ros2', 'launch', 'car_voice', 'voice.launch.py',
+            'tts_voice:=%s' % self.tts_voice,
+            'sound_volume:=%d' % self.tts_volume,
+        ]
 
     @staticmethod
     def rosbridge_command():
@@ -1832,6 +1884,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self.send_json(self.server.dashboard.status())
             elif path == '/api/events':
                 self.send_json(self.server.dashboard.get_events())
+            elif path == '/api/event/image':
+                self.serve_event_image(urlsplit(self.path).query)
             elif path == '/api/features':
                 self.send_json(self.server.dashboard.get_features())
             elif path == '/api/report/job':
@@ -1944,6 +1998,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 result = dashboard.set_voice_toggle('asr', True)
             elif self.path == '/api/voice/asr/stop':
                 result = dashboard.set_voice_toggle('asr', False)
+            elif self.path == '/api/voice/params':
+                result = dashboard.set_voice_params(payload)
+            elif self.path == '/api/voice/speak':
+                result = dashboard.speak_text(payload)
             else:
                 result = {'ok': False, 'error': 'not found'}
                 self.send_json(result, 404)
@@ -1976,6 +2034,36 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def serve_event_image(self, query):
+        # 仅服务 car_report data 的 events/images 目录下的截图,校验路径防穿越。
+        params = parse_qs(query or '')
+        raw = (params.get('path') or [''])[0]
+        if not raw:
+            self.send_json({'ok': False, 'error': 'missing path'}, 400)
+            return
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            base = Path(get_package_share_directory('car_report')).joinpath('data', 'events', 'images').resolve()
+        except Exception:
+            self.send_json({'ok': False, 'error': 'image dir unavailable'}, 500)
+            return
+        try:
+            requested = Path(unquote(raw)).resolve()
+        except Exception:
+            self.send_json({'ok': False, 'error': 'invalid path'}, 400)
+            return
+        if base not in requested.parents or not requested.is_file():
+            self.send_json({'ok': False, 'error': 'not found'}, 404)
+            return
+        content_type = mimetypes.guess_type(str(requested))[0] or 'image/jpeg'
+        data = requested.read_bytes()
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'max-age=3600')
         self.end_headers()
         self.wfile.write(data)
 

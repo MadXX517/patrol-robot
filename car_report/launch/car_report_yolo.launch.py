@@ -31,7 +31,9 @@ def generate_launch_description():
     )
     target_classes_arg = DeclareLaunchArgument(
         'target_classes',
-        default_value='',
+        # 军警巡逻关注:人、各类车辆、可疑随身物品(刀/剪/背包/行李箱/手提包)。
+        # 模型仍出全部 COCO 类,此白名单在记录端过滤,只存/显示/播报这些。
+        default_value='person,bicycle,car,motorcycle,bus,truck,knife,scissors,backpack,suitcase,handbag',
         description='Comma-separated class names; empty means all classes'
     )
     save_image_arg = DeclareLaunchArgument(
@@ -98,6 +100,8 @@ def generate_launch_description():
             'conf_thres': ParameterValue(LaunchConfiguration('yolo_conf_thres'), value_type=float),
             'show_result': ParameterValue(LaunchConfiguration('yolo_show_result'), value_type=bool),
             'pub_result_img': ParameterValue(LaunchConfiguration('yolo_pub_result_img'), value_type=bool),
+            # result_img 只画白名单类别的框,与记录端 target_classes 用同一份。
+            'draw_classes': LaunchConfiguration('target_classes'),
         }]
     )
 

@@ -84,7 +84,7 @@ def build_args():
     ap.add_argument('--yaml_file', default='chat_prompt_patrol.yaml')
     ap.add_argument('--llm_model', default='qwen-flash')
     ap.add_argument('--tts_voice', default='Serena')
-    ap.add_argument('--tts_model', default='qwen-tts')
+    ap.add_argument('--tts_model', default='qwen3-tts-flash')
     ap.add_argument('--asr_model', default='paraformer-realtime-v2')
     ap.add_argument('--sound_volume', type=int, default=90)
     ap.add_argument('--max_sentence_silence', type=int, default=800)
@@ -191,6 +191,18 @@ def main():
                     asr_on = True
                 elif cmd == 'asr_off':
                     asr_on = False
+                elif cmd.startswith('voice:'):
+                    name = cmd.split(':', 1)[1].strip()
+                    if name:
+                        tts_player.voice = name      # 下一句发声即用新音色
+                        print('[voice] 音色切换: %s' % name)
+                elif cmd.startswith('volume:'):
+                    try:
+                        vol = max(0, min(100, int(cmd.split(':', 1)[1])))
+                        tts_player.volume = vol / 100.0
+                        print('[voice] 音量切换: %d%%' % vol)
+                    except ValueError:
+                        pass
                 print('[voice] 开关更新: 播报=%s 触发=%s' % (tts_on, asr_on))
 
             # 2) 播报队列(关播报时丢弃,保持静音)
