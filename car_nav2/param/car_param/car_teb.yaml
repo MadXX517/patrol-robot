@@ -106,7 +106,10 @@ controller_server:
       dt_hysteresis: 0.05
       max_samples: 500
       global_plan_overwrite_orientation: True
-      allow_init_with_backwards_motion: False
+      # True:允许 TEB 规划"先倒一点再转"的起手轨迹。修复 bug:返回起点后车头背对目标,
+      # 贴原点障碍掉头时 footprint 蹭墙→每条轨迹起手即 not feasible→反复 reset 死循环、原地不动。
+      # 倒车后向是盲区(雷达后向被 scan_angle_filter 滤掉),靠 max_vel_x_backwards=0.10 低速兜底。
+      allow_init_with_backwards_motion: True
       max_global_plan_lookahead_dist: 1.5
       global_plan_viapoint_sep: 0.05
       global_plan_prune_distance: 1.0
