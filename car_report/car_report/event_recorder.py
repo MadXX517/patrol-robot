@@ -142,7 +142,7 @@ class EventRecorderNode(Node):
         event_time = datetime.now().astimezone()
         timestamp = event_time.strftime('%Y%m%d_%H%M%S_%f')
         width, height = self._resolve_image_size(obj)
-        image_path = self._save_snapshot(obj.class_name, timestamp)
+        image_path = self._save_snapshot(obj, timestamp)
         image_bytes = os.path.getsize(image_path) if image_path else 0
 
         return {
@@ -166,19 +166,40 @@ class EventRecorderNode(Node):
             height = int(obj.height)
         return width, height
 
-    def _save_snapshot(self, class_name, timestamp):
+    def _save_snapshot(self, obj, timestamp):
         if not self.save_image or self.latest_image is None:
             return None
 
+        class_name = obj.class_name
         safe_name = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in class_name)
         image_file = self.images_dir / f'{timestamp}_{safe_name}.jpg'
         try:
-            image_bytes = self._encode_jpeg_under_limit(self.latest_image)
+            annotated = self._draw_annotation(self.latest_image.copy(), obj)
+            image_bytes = self._encode_jpeg_under_limit(annotated)
             image_file.write_bytes(image_bytes)
         except Exception as e:
             self.get_logger().error(f'failed to save snapshot: {e}')
             return None
         return str(image_file)
+
+    @staticmethod
+    def _draw_annotation(image, obj):
+        # 在截图上画检测框 + 类别 + 置信度,和事件记录一致。
+        h, w = image.shape[:2]
+        box = [int(v) for v in obj.box]
+        if len(box) < 4:
+            return image
+        x1, y1, x2, y2 = box[0], box[1], box[2], box[3]
+        x1 = max(0, min(x1, w - 1)); x2 = max(0, min(x2, w - 1))
+        y1 = max(0, min(y1, h - 1)); y2 = max(0, min(y2, h - 1))
+        color = (0, 220, 0)
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+        label = f'{obj.class_name} {float(obj.score):.2f}'
+        (tw, th), bl = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        ty = max(0, y1 - th - bl)
+        cv2.rectangle(image, (x1, ty), (x1 + tw, ty + th + bl), color, -1)
+        cv2.putText(image, label, (x1, ty + th), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        return image
 
     def _encode_jpeg_under_limit(self, image):
         quality = max(30, min(95, self.jpeg_quality))

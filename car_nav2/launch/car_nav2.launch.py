@@ -110,9 +110,10 @@ def generate_launch_description():
     car_base = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(car_launch_dir, 'car_base.launch.py')),
     )
-    car_lidar = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(car_launch_dir, 'car_lidar.launch.py')),
-    )
+    # NOTE: car_lidar is already included inside car_base.launch.py.
+    # Including it here again would spawn duplicate scan_angle_filter nodes whose
+    # /scan messages share identical timestamps, which cartographer drops as
+    # "Ignored subdivision of a LaserScan message" -> empty map TF.
     # Specify the actions
     bringup_cmd_group = GroupAction([
         PushRosNamespace(
@@ -169,7 +170,6 @@ def generate_launch_description():
     # Set environment variables
     ld.add_action(stdout_linebuf_envvar)
 
-    ld.add_action(car_lidar)
     ld.add_action(car_base)
         
     # Declare the launch options

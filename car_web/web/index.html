@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>巡逻小车操作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>巡逻小车操作台</h1>
+      <p id="statusText">正在连接后端...</p>
+    </div>
+    <div class="mode-switch">
+      <button id="uiModeFollowBtn" class="mode-tab active">跟随/巡检</button>
+      <button id="uiModeNavBtn" class="mode-tab">建图导航</button>
+    </div>
+    <div class="status-group">
+      <span id="batteryBadge" class="badge battery" title="车辆电量">电量 --</span>
+      <span id="coreBadge" class="badge">core</span>
+      <span id="reportBadge" class="badge">report</span>
+      <span id="notifyBadge" class="badge">notify</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="video-panel">
+      <div class="panel-head">
+        <div>
+          <h2>实时画面</h2>
+          <p id="videoHint" class="hint compact">等待视频服务...</p>
+        </div>
+        <div class="video-meta">
+          <select id="streamSelect" class="stream-select" title="选择视频流">
+            <option value="">自动(跟随功能)</option>
+            <option value="/camera/color/image_raw">原始相机</option>
+            <option value="/result_img">识别结果</option>
+            <option value="/person_follow/result_img">跟随画面</option>
+            <option value="/gesture_command/result_img">手势画面</option>
+          </select>
+          <span id="videoTopic" class="topic">/camera/color/image_raw</span>
+          <a id="videoLink" class="video-link" target="_blank" rel="noreferrer">打开视频直链</a>
+          <a id="videoHomeLink" class="video-link" target="_blank" rel="noreferrer">视频服务首页</a>
+        </div>
+      </div>
+      <div class="video-frame">
+        <img id="videoStream" alt="实时画面">
+        <div id="videoError" class="video-error">视频加载中</div>
+        <canvas id="navCanvas" class="nav-canvas hidden" width="800" height="600"></canvas>
+      </div>
+    </section>
+
+    <section class="control-panel">
+      <div class="panel" id="voicePanel">
+        <h2>语音</h2>
+        <p class="hint compact" id="voiceState">语音:播报关 / 触发关</p>
+        <div class="button-row grid-two compact">
+          <button id="voiceTtsToggleBtn" class="btn">开启语音播报</button>
+          <button id="voiceAsrToggleBtn" class="btn">开启语音触发</button>
+        </div>
+        <div class="voice-params compact">
+          <label class="voice-field">
+            <span class="voice-field-label">音色</span>
+            <select id="voiceSelect"></select>
+          </label>
+          <label class="voice-field">
+            <span class="voice-field-label">音量 <span id="voiceVolVal">90</span>%</span>
+            <input id="voiceVolume" type="range" min="0" max="100" step="5" value="90">
+          </label>
+        </div>
+        <div class="voice-speak compact">
+          <input id="voiceTextInput" type="text" maxlength="200" placeholder="输入要播报的内容">
+          <button id="voiceSpeakBtn" class="btn primary">播报</button>
+        </div>
+        <div id="voicePhrases" class="voice-phrases compact"></div>
+      </div>
+
+      <div id="followGroup" class="panel-group">
+      <div class="panel">
+        <h2>模式</h2>
+        <div class="button-row grid-two">
+          <button id="manualBtn" class="btn primary">启动底盘+相机</button>
+          <button id="coreStopBtn" class="btn">关闭底盘+相机</button>
+        </div>
+        <div class="button-row grid-two compact">
+          <button id="featureToggleBtn" class="btn">功能列表</button>
+          <button id="allStopBtn" class="btn danger">全部停止</button>
+        </div>
+      </div>
+
+      <div id="featurePanel" class="panel hidden">
+        <div class="panel-title-row">
+          <h2>功能中心</h2>
+          <button id="featureCloseBtn" class="link-button">收起</button>
+        </div>
+        <div id="featureListView">
+          <p class="hint compact">点击功能只进入详情，不会立即启动节点。</p>
+          <div id="featureGrid" class="feature-grid"></div>
+        </div>
+        <div id="featureDetailView" class="feature-detail hidden">
+          <button id="featureBackBtn" class="link-button">返回功能列表</button>
+          <h3 id="featureDetailName">功能详情</h3>
+          <p id="featureDetailDesc" class="hint compact"></p>
+          <p id="featureDetailStatus" class="hint compact"></p>
+          <div class="button-row grid-two compact">
+            <button id="featureStartBtn" class="btn primary">启动功能</button>
+            <button id="featureStopBtn" class="btn">停止功能</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>遥控</h2>
+        <p class="hint compact">拖动摇杆控制,松开自动停车。上下=前进/后退,左右=转向或横移。</p>
+        <div class="joystick-wrap" data-joystick>
+          <div class="joystick-modes button-row grid-two compact">
+            <button class="btn primary" data-jmode="steer">转向模式</button>
+            <button class="btn" data-jmode="strafe">横移模式</button>
+          </div>
+          <div class="joystick-pad">
+            <div class="joystick-knob"></div>
+          </div>
+          <label class="joystick-speed hint compact">
+            速度 <span data-jspeed-label>50%</span>
+            <input type="range" min="10" max="100" value="50" step="5" data-jspeed>
+          </label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>复位与云台</h2>
+        <p class="hint compact">底盘复位只发送零速度；云台回中让摄像头回到中位。</p>
+        <div class="button-row grid-two compact">
+          <button id="chassisResetBtn" class="btn">底盘复位</button>
+          <button id="servoResetBtn" class="btn">云台回中</button>
+        </div>
+        <div class="button-row grid-two compact">
+          <button id="cameraLeftBtn" class="btn">左看</button>
+          <button id="cameraRightBtn" class="btn">右看</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>跟随控制</h2>
+        <p class="hint compact">切换运行中跟随的模式与速度。启动跟随请用上方功能中心。</p>
+        <p class="hint compact" id="patrolState">巡逻:未运行</p>
+        <p class="hint compact" id="followSpeed">跟随速度:-</p>
+        <div class="button-row grid-two compact">
+          <button id="patrolFollowBtn" class="btn">切换为跟随</button>
+          <button id="patrolTrackBtn" class="btn">切换为追踪</button>
+        </div>
+        <div class="button-row grid-two compact">
+          <button id="patrolRelockBtn" class="btn">重新锁定目标</button>
+          <button id="patrolStopBtn" class="btn danger">停止跟随</button>
+        </div>
+        <div class="button-row grid-two compact">
+          <button id="followSlowerBtn" class="btn">减速</button>
+          <button id="followFasterBtn" class="btn">加速</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>手势控制</h2>
+        <p class="hint compact" id="gestureState">手势:未运行</p>
+        <div class="button-row compact">
+          <button id="gestureToggleBtn" class="btn primary">开启手势控制</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>事件与通知</h2>
+        <div class="button-row">
+          <button id="notifyStartBtn" class="btn">启动钉钉</button>
+          <button id="notifyStopBtn" class="btn">停止钉钉</button>
+        </div>
+        <div class="button-row">
+          <button id="reportTextBtn" class="btn">文本报告</button>
+          <button id="reportVisionBtn" class="btn">图文报告</button>
+        </div>
+        <p id="reportJob" class="hint">报告任务：空闲</p>
+      </div>
+      </div><!-- /followGroup -->
+
+      <div id="navGroup" class="panel-group hidden">
+        <div class="panel">
+          <h2>建图导航</h2>
+          <p class="hint compact" id="navState">导航:空闲</p>
+          <p class="hint compact">建图导航模式占用底盘,与跟随互斥。切换会自动停跟随、起导航栈。</p>
+          <div class="button-row grid-two compact">
+            <button id="mapManualBtn" class="btn primary">手动建图</button>
+            <button id="mapExploreBtn" class="btn primary">自动建图</button>
+          </div>
+          <div class="button-row grid-two compact">
+            <button id="exploreStopBtn" class="btn">停止自动探索</button>
+            <button id="navStopBtn" class="btn danger">停止导航栈</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>自主导航</h2>
+          <p class="hint compact">点地图设导航目标(可按住拖出朝向)。先用"设初始位姿"校准定位。</p>
+          <div class="button-row grid-two compact">
+            <button id="setPoseBtn" class="btn">设初始位姿</button>
+            <button id="navHomeBtn" class="btn primary">回到起点</button>
+          </div>
+          <div class="button-row compact">
+            <button id="navCancelBtn" class="btn danger">取消导航</button>
+          </div>
+          <div class="speed-row compact">
+            <span id="navSpeed" class="speed-label">导航限速:-</span>
+            <button id="navSlowerBtn" class="btn">减速</button>
+            <button id="navFasterBtn" class="btn">加速</button>
+          </div>
+          <p class="hint compact">多点巡航:开"巡航打点"后逐个点地图排路线,再"开始巡航"车依次到访。</p>
+          <div class="button-row grid-two compact">
+            <button id="cruiseModeBtn" class="btn">巡航打点</button>
+            <button id="cruiseClearBtn" class="btn">清空点</button>
+          </div>
+          <div class="button-row compact">
+            <button id="cruiseStartBtn" class="btn primary">开始巡航 (<span id="cruiseCount">0</span> 点)</button>
+          </div>
+          <p class="hint compact">命名点:把车开到某处,输入名字"存当前位置",之后可一键或语音"去xxx"。</p>
+          <div class="point-save-row compact">
+            <input id="pointNameInput" class="text-input" type="text" placeholder="点名,如 客厅" maxlength="20">
+            <button id="pointSaveBtn" class="btn">存当前位置</button>
+          </div>
+          <ul id="pointList" class="point-list"></ul>
+        </div>
+
+        <div class="panel">
+          <h2>遥控建图</h2>
+          <p class="hint compact">手动建图时拖摇杆开车,走遍区域把图补全。上下=前进/后退,左右=转向或横移。</p>
+          <div class="joystick-wrap" data-joystick>
+            <div class="joystick-modes button-row grid-two compact">
+              <button class="btn primary" data-jmode="steer">转向模式</button>
+              <button class="btn" data-jmode="strafe">横移模式</button>
+            </div>
+            <div class="joystick-pad">
+              <div class="joystick-knob"></div>
+            </div>
+            <label class="joystick-speed hint compact">
+              速度 <span data-jspeed-label>50%</span>
+              <input type="range" min="10" max="100" value="50" step="5" data-jspeed>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>地图管理</h2>
+          <div class="button-row compact">
+            <input id="mapNameInput" class="text-input" type="text" placeholder="地图名(如 office)" maxlength="40">
+          </div>
+          <div class="button-row grid-two compact">
+            <button id="mapSaveBtn" class="btn primary">保存当前地图</button>
+            <button id="mapRefreshBtn" class="btn">刷新列表</button>
+          </div>
+          <p class="hint compact">已存地图(点击加载进入定位导航):</p>
+          <div id="mapList" class="map-list"></div>
+        </div>
+      </div><!-- /navGroup -->
+    </section>
+
+    <section class="events-panel">
+      <div class="panel-head">
+        <h2>识别事件</h2>
+        <span id="eventCount" class="topic">0 条</span>
+        <button id="eventsToggleBtn" class="link-button">收起</button>
+      </div>
+      <div id="eventsList" class="events-list"></div>
+    </section>
+  </main>
+
+  <script src="/static/vendor/roslib.min.js"></script>
+  <script src="/static/nav_map.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -15,6 +15,13 @@ DEFAULT_ENDPOINT = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
 DEFAULT_MODEL = 'glm-4v-flash'
 DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024
 BIGMODEL_API_KEY = '63023e7229c04850a90557fe96ede2fa.8YVCP4HcjEt5mmw4'
+# 钉钉自定义机器人(与 car_notify/dingtalk_notifier 同一个)。报告生成后可选发送。
+DINGTALK_WEBHOOK_URL = (
+    'https://oapi.dingtalk.com/robot/send?'
+    'access_token=a6d04355c1119b47c1db727a3e3b54e58eb8dd36456313569b3db5f78c2e3c93'
+)
+DINGTALK_KEYWORD = '巡逻告警'
+DINGTALK_MAX_TEXT = 18000  # 钉钉单条 markdown 上限约 20000 字节,留余量并截断
 API_TEST_EVENT = {
     'time': '2026-05-11T21:30:12+08:00',
     'event_type': 'object_detected',
@@ -222,6 +229,37 @@ def call_bigmodel(api_key, endpoint, model, messages, temperature, timeout):
     return str(content)
 
 
+def send_report_to_dingtalk(webhook_url, keyword, content, timeout):
+    """把生成好的 markdown 报告作为钉钉 markdown 消息发送。
+    钉钉自定义机器人有关键词安全校验,故标题与正文都带上 keyword。超长截断。"""
+    if not webhook_url:
+        raise RuntimeError('DingTalk webhook_url is empty')
+
+    body = content.strip()
+    if len(body) > DINGTALK_MAX_TEXT:
+        body = body[:DINGTALK_MAX_TEXT] + '\n\n> (报告过长已截断)'
+    title = f'{keyword} - 巡逻报告'
+    text = f'### {keyword} - 巡逻报告\n\n{body}'
+    payload = {'msgtype': 'markdown', 'markdown': {'title': title, 'text': text}}
+
+    data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    request = urllib.request.Request(
+        webhook_url, data=data,
+        headers={'Content-Type': 'application/json;charset=utf-8'}, method='POST',
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode('utf-8', errors='replace')
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f'DingTalk HTTP {e.code}: {e.read().decode("utf-8", "replace")}') from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f'DingTalk request failed: {e}') from e
+    result = json.loads(raw)
+    if result.get('errcode') != 0:
+        raise RuntimeError(f'DingTalk error response: {raw}')
+    return result
+
+
 def write_report(output_dir, content, events_file, mode, model):
     reports_dir = output_dir / 'reports'
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -249,6 +287,9 @@ def parse_args(argv=None):
     parser.add_argument('--endpoint', default=DEFAULT_ENDPOINT, help='BigModel chat completions endpoint')
     parser.add_argument('--temperature', type=float, default=0.2, help='generation temperature')
     parser.add_argument('--timeout', type=float, default=60.0, help='HTTP timeout seconds')
+    parser.add_argument('--send-dingtalk', action='store_true', help='send the generated report to DingTalk')
+    parser.add_argument('--webhook-url', default=DINGTALK_WEBHOOK_URL, help='DingTalk custom robot webhook URL')
+    parser.add_argument('--keyword', default=DINGTALK_KEYWORD, help='DingTalk security keyword')
     parser.add_argument('--api-test', action='store_true', help='call GLM with a built-in event and print test input plus answer')
     return parser.parse_args(argv)
 
@@ -290,6 +331,14 @@ def main(argv=None):
     )
     report_file = write_report(output_dir, report, events_file, args.mode, args.model)
     print(str(report_file))
+
+    if args.send_dingtalk:
+        try:
+            send_report_to_dingtalk(args.webhook_url, args.keyword, report, args.timeout)
+            print('dingtalk: sent')
+        except RuntimeError as e:
+            print(f'dingtalk: failed: {e}', file=sys.stderr)
+            return 2
     return 0
 
 

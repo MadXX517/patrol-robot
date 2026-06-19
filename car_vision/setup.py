@@ -54,6 +54,7 @@ setup(
             'fall_down_detect = car_vision.fall_down_detect:main',
             'kcf_track = car_vision.kcf_track:main',
             'nav2_goals = car_vision.nav2_goals:main',
+            'nav2_waypoints = car_vision.nav2_waypoints:main',
             'qrcode_create = car_vision.qrcode_create:main',
             'qrcode_detecter = car_vision.qrcode_detecter:main',
             'depth_rgbd = car_vision.depth_rgbd:main',

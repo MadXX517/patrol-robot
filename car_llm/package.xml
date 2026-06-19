@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>car_llm</name>
+  <version>0.0.0</version>
+  <description>TODO: Package description</description>
+  <maintainer email="yeahbot@todo.todo">yeahbot</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <!-- 第二阶段开启机器人控制时需要(ros_control 依赖 car_vision/car_msg/几何消息) -->
+  <exec_depend>car_vision</exec_depend>
+  <exec_depend>car_msg</exec_depend>
+  <exec_depend>car_base</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <!-- Python 运行期依赖(经 pip 安装,rosdep 不解析):dashscope openai pyaudio numpy pyyaml pyserial -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

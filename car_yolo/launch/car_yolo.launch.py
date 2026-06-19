@@ -35,7 +35,7 @@ def launch_setup(context):
             #"camera_info_topic": "/camera/camera_info",
             #"camera_info_file": f"{package_share_directory}/config/camera_info.yaml",
             "show_result": False,
-            "pub_result_img": False}
+            "pub_result_img": True}
 
         ]
     )

@@ -487,6 +487,41 @@ bool car_base::Get_Sensor_Data()
         Mpu6050.angular_velocity.y =  Mpu6050_Data.gyros_y_data * GYROSCOPE_RATIO;
         Mpu6050.angular_velocity.z =  Mpu6050_Data.gyros_z_data * GYROSCOPE_RATIO;
 
+        // 启动陀螺零偏标定:前 GYRO_CAL_SAMPLES 帧(车须静止)累加求均值作零偏,之后每帧减掉。
+        // 2D 建图下 IMU 对 yaw 无绝对参照,残余零偏(实测~0.09°/s)会无校正地积分进航向,
+        // 几分钟累积十几度,致各 submap 几何扭曲。零偏每次上电不同故每次启动实测。
+        if (!gyro_calibrated) {
+          // 运动剔除:任一轴原始角速度过大说明车在动,重置累加,等静止窗口再标。
+          if (fabs(Mpu6050.angular_velocity.x) > 0.05 ||
+              fabs(Mpu6050.angular_velocity.y) > 0.05 ||
+              fabs(Mpu6050.angular_velocity.z) > 0.05) {
+            gyro_cal_count = 0;
+            gyro_cal_sum_x = gyro_cal_sum_y = gyro_cal_sum_z = 0.0;
+          } else {
+            gyro_cal_sum_x += Mpu6050.angular_velocity.x;
+            gyro_cal_sum_y += Mpu6050.angular_velocity.y;
+            gyro_cal_sum_z += Mpu6050.angular_velocity.z;
+            gyro_cal_count++;
+            if (gyro_cal_count >= GYRO_CAL_SAMPLES) {
+              gyro_bias_x = gyro_cal_sum_x / gyro_cal_count;
+              gyro_bias_y = gyro_cal_sum_y / gyro_cal_count;
+              gyro_bias_z = gyro_cal_sum_z / gyro_cal_count;
+              gyro_calibrated = true;
+              RCLCPP_INFO(this->get_logger(),
+                "Gyro bias calibrated: x=%.5f y=%.5f z=%.5f rad/s",
+                gyro_bias_x, gyro_bias_y, gyro_bias_z);
+            }
+          }
+          // 标定期间车静止,输出 0 角速度,避免未标定的偏置喂给下游积分。
+          Mpu6050.angular_velocity.x = 0.0;
+          Mpu6050.angular_velocity.y = 0.0;
+          Mpu6050.angular_velocity.z = 0.0;
+        } else {
+          Mpu6050.angular_velocity.x -= gyro_bias_x;
+          Mpu6050.angular_velocity.y -= gyro_bias_y;
+          Mpu6050.angular_velocity.z -= gyro_bias_z;
+        }
+
         Robot_Vel.X = Odom_Trans(Receive_Data.rx[14],Receive_Data.rx[15]); //Get the speed of the moving chassis in the X direction //获取运动底盘X方向速度
         
         Robot_Vel.Y = Odom_Trans(Receive_Data.rx[16],Receive_Data.rx[17]); //Get the speed of the moving chassis in the Y direction, The Y speed is only valid in the omnidirectional mobile robot chassis

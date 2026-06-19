@@ -106,7 +106,10 @@ controller_server:
       dt_hysteresis: 0.05
       max_samples: 500
       global_plan_overwrite_orientation: True
-      allow_init_with_backwards_motion: False
+      # True:允许 TEB 规划"先倒一点再转"的起手轨迹。修复 bug:返回起点后车头背对目标,
+      # 贴原点障碍掉头时 footprint 蹭墙→每条轨迹起手即 not feasible→反复 reset 死循环、原地不动。
+      # 倒车后向是盲区(雷达后向被 scan_angle_filter 滤掉),靠 max_vel_x_backwards=0.10 低速兜底。
+      allow_init_with_backwards_motion: True
       max_global_plan_lookahead_dist: 1.5
       global_plan_viapoint_sep: 0.05
       global_plan_prune_distance: 1.0
@@ -129,15 +132,17 @@ controller_server:
 
       # Velocity and acceleration limits
       footprint_model:
-        type: "circular"
-        radius: 0.1
+        type: "polygon"
+        # 真实车身 0.272(长)x0.245(宽)+ ~1.5cm 余量。矩形让 TEB 按朝向算间隙,
+        # 转正用窄边(0.245)穿洞,不像圆形按对角线(0.38)硬算把宽洞算死。
+        vertices: "[[0.136, 0.1225], [0.136, -0.1225], [-0.136, -0.1225], [-0.136, 0.1225]]"
 
       # GoalTolerance
       free_goal_vel: True
           
       # Obstacles
-      min_obstacle_dist: 0.05
-      inflation_dist: 0.05
+      min_obstacle_dist: 0.06
+      inflation_dist: 0.06
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 1.0
       obstacle_poses_affected: 15
@@ -224,12 +229,12 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.03
-      robot_radius: 0.1
+      footprint: "[[0.136, 0.1225], [0.136, -0.1225], [-0.136, -0.1225], [-0.136, 0.1225]]"
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0
-        inflation_radius: 0.15  
+        inflation_radius: 0.15
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -269,7 +274,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: False
-      robot_radius: 0.1
+      footprint: "[[0.136, 0.1225], [0.136, -0.1225], [-0.136, -0.1225], [-0.136, 0.1225]]"
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
@@ -293,7 +298,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0
-        inflation_radius: 0.2
+        inflation_radius: 0.15
       always_send_full_costmap: True
   global_costmap_client:
     ros__parameters:

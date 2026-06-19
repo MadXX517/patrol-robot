@@ -36,7 +36,8 @@ def generate_launch_description():
     )
     target_classes_arg = DeclareLaunchArgument(
         'target_classes',
-        default_value='',
+        # 军警巡逻关注:人、各类车辆、可疑随身物品。空=不过滤(记录全部)。
+        default_value='person,bicycle,car,motorcycle,bus,truck,knife,scissors,backpack,suitcase,handbag',
         description='Comma-separated class names; empty means all classes'
     )
     save_image_arg = DeclareLaunchArgument(

@@ -31,7 +31,9 @@ def generate_launch_description():
     )
     target_classes_arg = DeclareLaunchArgument(
         'target_classes',
-        default_value='',
+        # 军警巡逻关注:人、各类车辆、可疑随身物品(刀/剪/背包/行李箱/手提包)。
+        # 模型仍出全部 COCO 类,此白名单在记录端过滤,只存/显示/播报这些。
+        default_value='person,bicycle,car,motorcycle,bus,truck,knife,scissors,backpack,suitcase,handbag',
         description='Comma-separated class names; empty means all classes'
     )
     save_image_arg = DeclareLaunchArgument(
@@ -66,8 +68,13 @@ def generate_launch_description():
     )
     yolo_rknn_model_arg = DeclareLaunchArgument(
         'yolo_rknn_model',
-        default_value='yolov5s.rknn',
-        description='RKNN model file name in car_yolo config, or an absolute path'
+        default_value='',
+        description='RKNN model file name in car_yolo config, or an absolute path; empty means <yolo_model>.rknn'
+    )
+    yolo_conf_thres_arg = DeclareLaunchArgument(
+        'yolo_conf_thres',
+        default_value='0.25',
+        description='YOLO confidence threshold for object detection and annotated result images'
     )
     yolo_show_result_arg = DeclareLaunchArgument(
         'yolo_show_result',
@@ -90,8 +97,11 @@ def generate_launch_description():
             'model': LaunchConfiguration('yolo_model'),
             'rknn_model': LaunchConfiguration('yolo_rknn_model'),
             'image_topic': LaunchConfiguration('image_topic'),
+            'conf_thres': ParameterValue(LaunchConfiguration('yolo_conf_thres'), value_type=float),
             'show_result': ParameterValue(LaunchConfiguration('yolo_show_result'), value_type=bool),
             'pub_result_img': ParameterValue(LaunchConfiguration('yolo_pub_result_img'), value_type=bool),
+            # result_img 只画白名单类别的框,与记录端 target_classes 用同一份。
+            'draw_classes': LaunchConfiguration('target_classes'),
         }]
     )
 
@@ -126,6 +136,7 @@ def generate_launch_description():
         yolo_device_arg,
         yolo_model_arg,
         yolo_rknn_model_arg,
+        yolo_conf_thres_arg,
         yolo_show_result_arg,
         yolo_pub_result_img_arg,
         yolo_node,
