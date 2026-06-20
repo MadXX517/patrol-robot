@@ -9,7 +9,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     mode_arg = DeclareLaunchArgument('mode', default_value='follow',
                                      description='follow | track_only')
-    follow_distance_arg = DeclareLaunchArgument('follow_distance', default_value='1.2')
+    follow_distance_arg = DeclareLaunchArgument('follow_distance', default_value='2.0')
     safe_distance_arg = DeclareLaunchArgument('safe_distance', default_value='0.8')
     lidar_safe_distance_arg = DeclareLaunchArgument('lidar_safe_distance', default_value='0.45')
     max_lin_arg = DeclareLaunchArgument('max_lin', default_value='0.25')

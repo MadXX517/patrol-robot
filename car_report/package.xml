@@ -3,7 +3,7 @@
 <package format="3">
   <name>car_report</name>
   <version>0.0.0</version>
-  <description>Visual event recording and GLM report generation for the patrol robot.</description>
+  <description>Visual event recording and LLM report generation for the patrol robot.</description>
   <maintainer email="yeahbot@todo.todo">yeahbot</maintainer>
   <license>TODO: License declaration</license>
 
@@ -17,6 +17,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>car_yolo</exec_depend>
+  <exec_depend>car_llm</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

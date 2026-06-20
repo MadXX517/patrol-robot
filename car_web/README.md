@@ -174,8 +174,8 @@ car_notify/launch/dingtalk_notify.launch.py cooldown_sec:=60
 - 左看/右看：通过 `/ik_states` 微调 `joint0`。
 - 上看/下看：通过 `/ik_states` 微调 `joint3`。如果实车方向和按钮文字相反，后续只需要交换加减方向。
 - 启动钉钉/停止钉钉：只控制钉钉通知节点。
-- 文本报告：调用 `report_generator --mode text`，只把事件摘要发给 GLM。
-- 图文报告：调用 `report_generator --mode vision --max-images 3`，把事件摘要和最多 3 张截图发给 GLM。
+- 文本报告：调用 `report_generator --mode text`，只把事件摘要发给 `car_llm` 的 `llm_model`。
+- 图文报告：调用 `report_generator --mode vision --max-images 3`，把事件摘要和最多 3 张截图发给 `car_llm` 的 `vision_model`。
 
 ## 遥控逻辑
 
@@ -249,7 +249,7 @@ ros2 topic echo /ik_states
 
 `/ik_states` 的 `position` 应包含 7 个值：前 6 个是关节角，最后 1 个是动作时间。左看/右看会改变 `joint0`，上看/下看会改变 `joint3`，云台回中会把 `joint0` 设为 `0`、`joint3` 设为约 `1.2`。
 
-单独测试 GLM API：
+单独测试 LLM API：
 
 ```bash
 ros2 run car_report report_generator --api-test

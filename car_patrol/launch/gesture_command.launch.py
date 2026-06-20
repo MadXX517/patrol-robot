@@ -14,7 +14,9 @@ def generate_launch_description():
     armed_timeout_arg = DeclareLaunchArgument('armed_timeout', default_value='15.0')
     confirm_hold_arg = DeclareLaunchArgument('confirm_hold', default_value='3.0')
     cmd_cooldown_arg = DeclareLaunchArgument('cmd_cooldown', default_value='3.0')
-    process_every_arg = DeclareLaunchArgument('process_every', default_value='1')
+    # process_every=3:每3帧跑一次 MediaPipe(30Hz→~10Hz)。手势识别足够,
+    # 且为与 person_follow 共存腾出 CPU(实测 every=1 时 gesture 占 76%,降后~25%)。
+    process_every_arg = DeclareLaunchArgument('process_every', default_value='3')
     detect_width_arg = DeclareLaunchArgument('detect_width', default_value='480')
     flip_arg = DeclareLaunchArgument('flip', default_value='false')
     enable_dynamic_arg = DeclareLaunchArgument('enable_dynamic', default_value='true')

@@ -592,12 +592,18 @@ body.events-collapsed .events-list {
 
 .joystick-speed {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
 }
 
-.joystick-speed input[type="range"] {
-  flex: 1;
+.joystick-speed .button-row {
+  margin: 0;
+}
+
+.joystick-speed [data-jspeed-label] {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .hint {
@@ -747,3 +753,39 @@ body.events-collapsed .events-list {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 紧急报警 */
+.emergency-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 14px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #fff;
+  background: #d92020;
+  border: 1px solid #b01818;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.emergency-btn:hover { background: #c01c1c; }
+.emergency-btn.alarm-active {
+  background: #8a0f0f;
+  animation: alarm-pulse 0.8s ease-in-out infinite;
+}
+#emergencyPanel.alarm-active {
+  border-color: #d92020;
+  box-shadow: 0 0 0 2px rgba(217, 32, 32, 0.5);
+}
+@keyframes alarm-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 32, 32, 0.7); }
+  50% { box-shadow: 0 0 14px 4px rgba(217, 32, 32, 0.9); }
+}
+.event-item.emergency {
+  border: 1px solid #d92020;
+  background: rgba(217, 32, 32, 0.12);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.event-item.emergency strong { color: #ff5252; }
+
