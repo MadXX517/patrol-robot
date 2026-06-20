@@ -13,7 +13,7 @@
 
 ## 做什么
 
-`car_notify` 不做识别、不做事件记录，也不生成 GLM 报告。它只负责把 `car_report` 已经发布出来的事件推送到钉钉群。
+`car_notify` 不做识别、不做事件记录，也不生成 LLM 报告。它只负责把 `car_report` 已经发布出来的事件推送到钉钉群。
 
 - 订阅 `/car_report/event`。
 - 解析 `car_report` 事件 JSON。

@@ -4,7 +4,7 @@
 
 - `car_base`：底盘串口、深度相机、网页视频服务。
 - `car_yolo`：YOLO/RKNN 目标识别和 `/result_img` 置信框画面。
-- `car_report`：视觉事件记录、截图保存、GLM 文本/图文报告生成。
+- `car_report`：视觉事件记录、截图保存、LLM 文本/图文报告生成。
 - `car_notify`：订阅视觉事件并通过钉钉机器人推送告警。
 
 ## 最常用流程
@@ -108,7 +108,7 @@ ros2 topic echo /car_yolo/object_detect
 ros2 topic echo /car_report/event
 ```
 
-单独测试 GLM API：
+单独测试 LLM API：
 
 ```bash
 ros2 run car_report report_generator --api-test
@@ -139,7 +139,7 @@ ros2 run web_video_server web_video_server
 
 - `car_base/`：底盘串口、相机、雷达、URDF、EKF 等硬件基础。
 - `car_yolo/`：YOLO/RKNN 识别，发布 `/car_yolo/object_detect` 和可选 `/result_img`。
-- `car_report/`：把 YOLO 结果记录为事件，保存 JSONL、截图，并生成 GLM 巡逻报告。
+- `car_report/`：把 YOLO 结果记录为事件，保存 JSONL、截图，并生成 LLM 巡逻报告。
 - `car_notify/`：订阅 `/car_report/event`，通过钉钉机器人推送告警。
 - `car_web/`：网页操作台，包装遥控、视频、功能中心、事件记录、通知和报告生成。
 - `car_llm/`：语音和大模型控制相关代码。
@@ -166,7 +166,7 @@ ros2 topic echo /car_yolo/object_detect
 ros2 topic echo /car_report/event
 ```
 
-单独测试 GLM API：
+单独测试 LLM API：
 
 ```bash
 ros2 run car_report report_generator --api-test

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 import argparse
+import ast
 import base64
 import json
 import os
@@ -11,10 +12,14 @@ from datetime import datetime
 from pathlib import Path
 
 
-DEFAULT_ENDPOINT = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
-DEFAULT_MODEL = 'glm-4v-flash'
 DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024
-BIGMODEL_API_KEY = '63023e7229c04850a90557fe96ede2fa.8YVCP4HcjEt5mmw4'
+DEFAULT_LLM_CONFIG = {
+    'api_key': '',
+    'base_url': '',
+    'llm_model': '',
+    'vision_model': '',
+    'config_source': '',
+}
 # 钉钉自定义机器人(与 car_notify/dingtalk_notifier 同一个)。报告生成后可选发送。
 DINGTALK_WEBHOOK_URL = (
     'https://oapi.dingtalk.com/robot/send?'
@@ -38,6 +43,65 @@ def default_output_dir():
         return str(Path(get_package_share_directory('car_report')) / 'data')
     except Exception:
         return str(Path(__file__).resolve().parents[1] / 'data')
+
+
+def find_car_llm_launch_file():
+    candidates = []
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        candidates.append(Path(get_package_share_directory('car_llm')) / 'launch' / 'car_llm.launch.py')
+    except Exception:
+        pass
+
+    candidates.append(Path(__file__).resolve().parents[2] / 'car_llm' / 'launch' / 'car_llm.launch.py')
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def parse_launch_argument_defaults(launch_file):
+    defaults = {}
+    tree = ast.parse(launch_file.read_text(encoding='utf-8'))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func_name = getattr(node.func, 'id', '')
+        if isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+        if func_name != 'DeclareLaunchArgument' or not node.args:
+            continue
+        name_node = node.args[0]
+        if not isinstance(name_node, ast.Constant) or not isinstance(name_node.value, str):
+            continue
+        default_value = None
+        for keyword in node.keywords:
+            if keyword.arg == 'default_value':
+                default_value = keyword.value
+                break
+        if isinstance(default_value, ast.Constant) and isinstance(default_value.value, str):
+            defaults[name_node.value] = default_value.value
+    return defaults
+
+
+def load_llm_defaults():
+    defaults = dict(DEFAULT_LLM_CONFIG)
+    launch_file = find_car_llm_launch_file()
+    if not launch_file:
+        return defaults
+    parsed = parse_launch_argument_defaults(launch_file)
+    for key in ('api_key', 'base_url', 'llm_model', 'vision_model'):
+        if parsed.get(key):
+            defaults[key] = parsed[key]
+    defaults['config_source'] = str(launch_file)
+    return defaults
+
+
+def build_chat_endpoint(base_url):
+    base = str(base_url or '').rstrip('/')
+    if not base:
+        return ''
+    return base + '/chat/completions'
 
 
 def expand_path(path):
@@ -117,6 +181,23 @@ def image_to_base64(path, max_image_bytes):
     return base64.b64encode(data).decode('ascii')
 
 
+def image_mime_type(path):
+    suffix = Path(path).suffix.lower()
+    if suffix in ('.jpg', '.jpeg'):
+        return 'image/jpeg'
+    if suffix == '.png':
+        return 'image/png'
+    if suffix == '.webp':
+        return 'image/webp'
+    return 'image/jpeg'
+
+
+def image_to_data_url(path, max_image_bytes):
+    encoded = image_to_base64(path, max_image_bytes)
+    mime_type = 'image/jpeg' if os.path.getsize(path) > max_image_bytes else image_mime_type(path)
+    return f'data:{mime_type};base64,{encoded}'
+
+
 def encode_jpeg_under_limit(image, max_image_bytes):
     import cv2
 
@@ -167,7 +248,7 @@ def build_messages(events, mode, max_images, max_image_bytes):
                 continue
             content.append({
                 'type': 'image_url',
-                'image_url': {'url': image_to_base64(image_file, max_image_bytes)},
+                'image_url': {'url': image_to_data_url(image_file, max_image_bytes)},
             })
             added += 1
         messages.append({'role': 'user', 'content': content})
@@ -193,7 +274,13 @@ def extract_user_text(messages):
     return ''
 
 
-def call_bigmodel(api_key, endpoint, model, messages, temperature, timeout):
+def call_llm_chat(api_key, endpoint, model, messages, temperature, timeout):
+    if not api_key:
+        raise RuntimeError('LLM api_key is empty; please update car_llm/launch/car_llm.launch.py')
+    if not endpoint:
+        raise RuntimeError('LLM endpoint is empty; please update car_llm base_url or pass --endpoint')
+    if not model:
+        raise RuntimeError('LLM model is empty; please update car_llm llm_model/vision_model or pass --model')
     payload = {
         'model': model,
         'messages': messages,
@@ -215,15 +302,15 @@ def call_bigmodel(api_key, endpoint, model, messages, temperature, timeout):
             raw = response.read().decode('utf-8')
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8', errors='replace')
-        raise RuntimeError(f'BigModel HTTP {e.code}: {error_body}') from e
+        raise RuntimeError(f'LLM HTTP {e.code}: {error_body}') from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f'BigModel request failed: {e}') from e
+        raise RuntimeError(f'LLM request failed: {e}') from e
 
     result = json.loads(raw)
     try:
         content = result['choices'][0]['message']['content']
     except (KeyError, IndexError, TypeError) as e:
-        raise RuntimeError(f'unexpected BigModel response: {raw}') from e
+        raise RuntimeError(f'unexpected LLM response: {raw}') from e
     if isinstance(content, list):
         return ''.join(str(item.get('text', item)) for item in content)
     return str(content)
@@ -277,34 +364,68 @@ def write_report(output_dir, content, events_file, mode, model):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description='Generate GLM patrol reports from car_report events.')
+    parser = argparse.ArgumentParser(description='Generate LLM patrol reports from car_report events.')
     parser.add_argument('--output-dir', default=default_output_dir(), help='event/report output directory')
     parser.add_argument('--events-file', default='', help='specific events_YYYYMMDD.jsonl file')
     parser.add_argument('--mode', choices=['text', 'vision'], default='text', help='text summary or vision review')
     parser.add_argument('--max-images', type=int, default=3, help='max event images in vision mode')
-    parser.add_argument('--max-image-bytes', type=int, default=DEFAULT_MAX_IMAGE_BYTES, help='max image bytes sent to GLM in vision mode')
-    parser.add_argument('--model', default=DEFAULT_MODEL, help='BigModel model id')
-    parser.add_argument('--endpoint', default=DEFAULT_ENDPOINT, help='BigModel chat completions endpoint')
+    parser.add_argument('--max-image-bytes', type=int, default=DEFAULT_MAX_IMAGE_BYTES, help='max image bytes sent to LLM in vision mode')
+    parser.add_argument('--api-key', default='', help='LLM API key override; default reads car_llm launch config')
+    parser.add_argument('--base-url', default='', help='LLM OpenAI-compatible base URL override; default reads car_llm launch config')
+    parser.add_argument('--model', default='', help='LLM model override; default uses llm_model or vision_model from car_llm')
+    parser.add_argument('--endpoint', default='', help='full LLM chat completions endpoint override')
     parser.add_argument('--temperature', type=float, default=0.2, help='generation temperature')
     parser.add_argument('--timeout', type=float, default=60.0, help='HTTP timeout seconds')
     parser.add_argument('--send-dingtalk', action='store_true', help='send the generated report to DingTalk')
     parser.add_argument('--webhook-url', default=DINGTALK_WEBHOOK_URL, help='DingTalk custom robot webhook URL')
     parser.add_argument('--keyword', default=DINGTALK_KEYWORD, help='DingTalk security keyword')
-    parser.add_argument('--api-test', action='store_true', help='call GLM with a built-in event and print test input plus answer')
+    parser.add_argument('--api-test', action='store_true', help='call LLM with a built-in event and print config, test input and answer')
     return parser.parse_args(argv)
+
+
+def resolve_llm_settings(args):
+    defaults = load_llm_defaults()
+    api_key = args.api_key or defaults.get('api_key', '')
+    base_url = args.base_url or defaults.get('base_url', '')
+    endpoint = args.endpoint or build_chat_endpoint(base_url)
+    model = args.model or (
+        defaults.get('vision_model') if args.mode == 'vision' else defaults.get('llm_model')
+    )
+    return {
+        'api_key': api_key,
+        'base_url': base_url,
+        'endpoint': endpoint,
+        'model': model,
+        'config_source': defaults.get('config_source', ''),
+    }
+
+
+def redact_secret(value):
+    if not value:
+        return ''
+    if len(value) <= 10:
+        return value[:2] + '***'
+    return value[:6] + '***' + value[-4:]
 
 
 def main(argv=None):
     args = parse_args(argv)
+    llm_settings = resolve_llm_settings(args)
     if args.api_test:
-        messages = build_messages([API_TEST_EVENT], 'text', 0, args.max_image_bytes)
-        print('=== API test input ===')
+        messages = build_messages([API_TEST_EVENT], args.mode, 0, args.max_image_bytes)
+        print('=== LLM config ===')
+        print(f"config_source: {llm_settings['config_source'] or 'not found'}")
+        print(f"model: {llm_settings['model']}")
+        print(f"base_url: {llm_settings['base_url']}")
+        print(f"endpoint: {llm_settings['endpoint']}")
+        print(f"api_key: {redact_secret(llm_settings['api_key'])}")
+        print('\n=== API test input ===')
         print(extract_user_text(messages))
         print('\n=== API test answer ===')
-        answer = call_bigmodel(
-            api_key=BIGMODEL_API_KEY,
-            endpoint=args.endpoint,
-            model=args.model,
+        answer = call_llm_chat(
+            api_key=llm_settings['api_key'],
+            endpoint=llm_settings['endpoint'],
+            model=llm_settings['model'],
             messages=messages,
             temperature=args.temperature,
             timeout=args.timeout,
@@ -319,17 +440,16 @@ def main(argv=None):
         raise SystemExit(f'no events found in {events_file}')
 
     messages = build_messages(events, args.mode, args.max_images, args.max_image_bytes)
-    api_key = BIGMODEL_API_KEY
 
-    report = call_bigmodel(
-        api_key=api_key,
-        endpoint=args.endpoint,
-        model=args.model,
+    report = call_llm_chat(
+        api_key=llm_settings['api_key'],
+        endpoint=llm_settings['endpoint'],
+        model=llm_settings['model'],
         messages=messages,
         temperature=args.temperature,
         timeout=args.timeout,
     )
-    report_file = write_report(output_dir, report, events_file, args.mode, args.model)
+    report_file = write_report(output_dir, report, events_file, args.mode, llm_settings['model'])
     print(str(report_file))
 
     if args.send_dingtalk:
