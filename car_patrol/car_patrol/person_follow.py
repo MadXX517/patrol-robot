@@ -56,7 +56,7 @@ class PersonFollow(Node):
         # ---------------- 参数 ----------------
         self.declare_parameter('mode', 'follow')                 # follow | track_only
         self.declare_parameter('machine_type', 'Mec')            # Mec | Ack
-        self.declare_parameter('follow_distance', 1.2)           # 期望跟随距离(m)
+        self.declare_parameter('follow_distance', 2.0)           # 期望跟随距离(m)
         self.declare_parameter('safe_distance', 0.8)             # 安全停车距离(m,离人太近)
         self.declare_parameter('lidar_safe_distance', 0.45)      # 雷达避障触发距离(m,与离人距离解耦)
         self.declare_parameter('max_lin', 0.25)                  # 最大线速度
@@ -525,7 +525,10 @@ class PersonFollow(Node):
                     v = 0.0
             else:
                 ratio = bh / float(img_h)        # 越大越近
-                v = (0.45 - ratio) * 1.2
+                # 无深度回退:框高占比代理距离。目标占比≈与 follow_distance 反比标定
+                # (0.45 占比≈1.2m,故 2.0m≈0.27);仅深度久缺时启用,正常走深度环。
+                target_ratio = 0.45 * 1.2 / self.follow_distance
+                v = (target_ratio - ratio) * 1.2
             # 安全:太近 / 雷达前方障碍 → 不再靠近(允许后退)
             too_close = (d is not None and d < self.safe_distance)
             lidar_block = (self.use_lidar_safety and self.front_min < self.lidar_safe_distance)

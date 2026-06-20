@@ -45,6 +45,8 @@ const api = {
   voiceAsrStop: '/api/voice/asr/stop',
   voiceParams: '/api/voice/params',
   voiceSpeak: '/api/voice/speak',
+  emergencyTrigger: '/api/emergency/trigger',
+  emergencyStop: '/api/emergency/stop',
   generateReport: '/api/report/generate',
 };
 
@@ -114,6 +116,9 @@ const els = {
   voiceTextInput: document.getElementById('voiceTextInput'),
   voiceSpeakBtn: document.getElementById('voiceSpeakBtn'),
   voicePhrases: document.getElementById('voicePhrases'),
+  emergencyBtn: document.getElementById('emergencyBtn'),
+  emergencyPanel: document.getElementById('emergencyPanel'),
+  emergencyState: document.getElementById('emergencyState'),
   patrolState: document.getElementById('patrolState'),
   uiModeFollowBtn: document.getElementById('uiModeFollowBtn'),
   uiModeNavBtn: document.getElementById('uiModeNavBtn'),
@@ -288,6 +293,37 @@ function initVoiceControls() {
       btn.addEventListener('click', () => speakVoiceText(VOICE_PHRASES[Number(btn.dataset.phrase)]));
     });
   }
+}
+
+let emergencyInited = false;
+
+function renderEmergency(data) {
+  const active = !!data.alarm_active;
+  if (els.emergencyBtn) {
+    els.emergencyBtn.textContent = active ? '🚨 解除报警' : '🚨 紧急报警';
+    els.emergencyBtn.classList.toggle('alarm-active', active);
+  }
+  if (els.emergencyPanel) els.emergencyPanel.classList.toggle('alarm-active', active);
+  if (els.emergencyState) {
+    els.emergencyState.textContent = active
+      ? '报警中:警笛鸣响,增援已通知(60秒后自动解除)'
+      : '一键触发增援:推送位置+现场图,鸣警笛震慑';
+  }
+}
+
+function initEmergencyControls() {
+  if (emergencyInited || !els.emergencyBtn) return;
+  emergencyInited = true;
+  els.emergencyBtn.addEventListener('click', () => {
+    const active = els.emergencyBtn.textContent.includes('解除');
+    if (active) {
+      postAndRefresh(api.emergencyStop);
+      return;
+    }
+    if (window.confirm('确认触发紧急报警?将通知增援、推送位置与现场图,并鸣响高音量警笛。')) {
+      postAndRefresh(api.emergencyTrigger);
+    }
+  });
 }
 
 function renderVoiceState(data) {
@@ -666,6 +702,7 @@ async function refreshStatus() {
     renderGestureState(data.gesture_state);
     renderBattery(data.battery);
     renderVoiceState(data);
+    renderEmergency(data);
     renderUiMode(data);
   } catch (error) {
     setStatus(`后端连接失败：${error.message}`, true);
@@ -813,12 +850,12 @@ function renderEvents(events) {
            onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'event-meta',textContent:'截图加载失败'}))">`
       : '<div class="event-meta">无截图</div>';
     return `
-      <div class="event-item">
+      <div class="event-item${event.emergency ? ' emergency' : ''}">
         <div class="event-main">
           <strong>${escapeHtml(name)}</strong>
           <span>${escapeHtml(score)}</span>
         </div>
-        <div class="event-meta">${escapeHtml(time)} | bbox: ${escapeHtml(bbox)}</div>
+        <div class="event-meta">${escapeHtml(time)}${event.location ? ' | 位置: ' + escapeHtml(event.location) : ' | bbox: ' + escapeHtml(bbox)}</div>
         ${imgHtml}
       </div>
     `;
@@ -907,7 +944,7 @@ async function stopDrive() {
 }
 
 // 麦轮摇杆:上下=前进/后退(linear.x),左右按模式=转向(angular.z)或横移(linear.y)。
-const JOY_MAX_LINEAR = 0.2;
+const JOY_MAX_LINEAR = 0.5;
 const JOY_MAX_ANGULAR = 1.0;
 const JOY_MAX_LATERAL = 0.2;
 // 横向(转向/横移)死区:|nx| 小于此值视为 0,避免前进时手抖误触转弯。
@@ -917,25 +954,42 @@ const JOY_SIDE_DEADZONE = 0.3;
 // 电机 <0.35rad/s 落入 PWM 死区走停抖动,故 0→0.35 物理上无法线性;
 // 跨过死区即从此值起步、线性长到上限,避免后端把小角速度踏平成 0.35 台阶。
 const JOY_MIN_ANGULAR = 0.35;
+// 摇杆最大速度档(m/s):按钮步进,下限 0.05、上限 = JOY_MAX_LINEAR(0.5)、默认 0.10。
+const JOY_SPEED_MIN = 0.05;
+const JOY_SPEED_MAX = JOY_MAX_LINEAR;
+const JOY_SPEED_STEP = 0.05;
+const JOY_SPEED_DEFAULT = 0.10;
 
 function initJoystick(wrap) {
   const pad = wrap.querySelector('.joystick-pad');
   const knob = wrap.querySelector('.joystick-knob');
-  const speedInput = wrap.querySelector('[data-jspeed]');
   const speedLabel = wrap.querySelector('[data-jspeed-label]');
+  const speedDownBtn = wrap.querySelector('[data-jspeed-down]');
+  const speedUpBtn = wrap.querySelector('[data-jspeed-up]');
   const modeBtns = wrap.querySelectorAll('[data-jmode]');
-  const ctx = { mode: 'steer', active: false };
+  const ctx = { mode: 'steer', active: false, speedMs: JOY_SPEED_DEFAULT };
 
   modeBtns.forEach((btn) => btn.addEventListener('click', () => {
     ctx.mode = btn.dataset.jmode;
     modeBtns.forEach((b) => b.classList.toggle('primary', b === btn));
   }));
-  if (speedInput && speedLabel) {
-    speedInput.addEventListener('input', () => { speedLabel.textContent = `${speedInput.value}%`; });
-  }
+
+  const renderSpeed = () => {
+    if (speedLabel) speedLabel.textContent = ctx.speedMs.toFixed(2);
+    if (speedDownBtn) speedDownBtn.disabled = ctx.speedMs <= JOY_SPEED_MIN + 1e-6;
+    if (speedUpBtn) speedUpBtn.disabled = ctx.speedMs >= JOY_SPEED_MAX - 1e-6;
+  };
+  const stepSpeed = (delta) => {
+    ctx.speedMs = Math.min(JOY_SPEED_MAX, Math.max(JOY_SPEED_MIN,
+      Math.round((ctx.speedMs + delta) / JOY_SPEED_STEP) * JOY_SPEED_STEP));
+    renderSpeed();
+  };
+  if (speedDownBtn) speedDownBtn.addEventListener('click', () => stepSpeed(-JOY_SPEED_STEP));
+  if (speedUpBtn) speedUpBtn.addEventListener('click', () => stepSpeed(JOY_SPEED_STEP));
+  renderSpeed();
 
   const send = (nx, ny) => {
-    const speed = (speedInput ? Number(speedInput.value) : 50) / 100;
+    const speed = ctx.speedMs / JOY_MAX_LINEAR;      // 档位换算回 0→1 比例,沿用既有缩放
     const linear = -ny * JOY_MAX_LINEAR * speed;     // 上(屏幕-y)=前进
     // 横向死区:|nx|<死区→0;超过后线性重映射回 0→1(sideMag),保号到 sign。
     let sideMag = Math.max(0, (Math.abs(nx) - JOY_SIDE_DEADZONE) / (1 - JOY_SIDE_DEADZONE));
@@ -1098,6 +1152,7 @@ function bindControls() {
     });
   }
   initVoiceControls();
+  initEmergencyControls();
   document.querySelectorAll('[data-joystick]').forEach(initJoystick);
 
   els.videoStream.addEventListener('load', () => {

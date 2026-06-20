@@ -202,6 +202,7 @@ class GestureCommandNode(Node):
         self.image_queue = queue.Queue(maxsize=2)
         self.running = True
         self.frame_idx = 0
+        self._rx_idx = 0        # 入帧计数,用于 _image_cb 反序列化前抽帧
         self.fsm = FSM.SLEEP
         self.armed_since = 0.0
         self.confirm_since = 0.0
@@ -255,6 +256,11 @@ class GestureCommandNode(Node):
             % ', '.join(str(c) for c in cands))
 
     def _image_cb(self, msg):
+        # 入帧门控:按 process_every 抽帧,**反序列化前**就丢掉不处理的帧,
+        # 省掉每帧 1280×720 的 imgmsg_to_cv2(~80MB/s,30Hz 时是主要 CPU 开销)。
+        self._rx_idx += 1
+        if self._rx_idx % self.process_every != 0:
+            return
         try:
             rgb = np.asarray(self.bridge.imgmsg_to_cv2(msg, 'rgb8'), dtype=np.uint8)
         except Exception as e:
@@ -281,17 +287,17 @@ class GestureCommandNode(Node):
 
             hands = []
             annotated = rgb
-            if self.frame_idx % self.process_every == 0:
-                try:
-                    # 缩图再喂 MediaPipe:CPU 大降。归一化坐标不受尺寸影响,精度不变。
-                    if self.detect_width and rgb.shape[1] > self.detect_width:
-                        sc = self.detect_width / float(rgb.shape[1])
-                        small = cv2.resize(rgb, (self.detect_width, int(rgb.shape[0] * sc)))
-                    else:
-                        small = rgb
-                    hands, annotated = self._detect(small, small.copy())
-                except Exception as e:
-                    self.get_logger().warn('detect fail: %s' % e)
+            # 入帧已按 process_every 抽过帧,这里每个队列帧都检测(不再二次门控)。
+            try:
+                # 缩图再喂 MediaPipe:CPU 大降。归一化坐标不受尺寸影响,精度不变。
+                if self.detect_width and rgb.shape[1] > self.detect_width:
+                    sc = self.detect_width / float(rgb.shape[1])
+                    small = cv2.resize(rgb, (self.detect_width, int(rgb.shape[0] * sc)))
+                else:
+                    small = rgb
+                hands, annotated = self._detect(small, small.copy())
+            except Exception as e:
+                self.get_logger().warn('detect fail: %s' % e)
 
             action = self._run_fsm(hands, t)
             if action:

@@ -76,6 +76,12 @@
         <div id="voicePhrases" class="voice-phrases compact"></div>
       </div>
 
+      <div class="panel" id="emergencyPanel">
+        <h2>紧急报警</h2>
+        <p class="hint compact" id="emergencyState">一键触发增援:推送位置+现场图,鸣警笛震慑</p>
+        <button id="emergencyBtn" class="btn emergency-btn">🚨 紧急报警</button>
+      </div>
+
       <div id="followGroup" class="panel-group">
       <div class="panel">
         <h2>模式</h2>
@@ -121,10 +127,13 @@
           <div class="joystick-pad">
             <div class="joystick-knob"></div>
           </div>
-          <label class="joystick-speed hint compact">
-            速度 <span data-jspeed-label>50%</span>
-            <input type="range" min="10" max="100" value="50" step="5" data-jspeed>
-          </label>
+          <div class="joystick-speed compact">
+            <span class="hint">最大速度 <span data-jspeed-label>0.10</span> m/s</span>
+            <div class="button-row grid-two compact">
+              <button type="button" class="btn" data-jspeed-down>减速</button>
+              <button type="button" class="btn" data-jspeed-up>加速</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -166,6 +175,8 @@
         <div class="button-row compact">
           <button id="gestureToggleBtn" class="btn primary">开启手势控制</button>
         </div>
+        <p class="hint compact">开启即可用手势控制底盘(自动备好执行方,待命不动)。挥手唤醒;
+          四指=跟随、一指=云台追踪、双手张开=急停、双手比二=重新锁定。</p>
       </div>
 
       <div class="panel">
@@ -239,10 +250,13 @@
             <div class="joystick-pad">
               <div class="joystick-knob"></div>
             </div>
-            <label class="joystick-speed hint compact">
-              速度 <span data-jspeed-label>50%</span>
-              <input type="range" min="10" max="100" value="50" step="5" data-jspeed>
-            </label>
+            <div class="joystick-speed compact">
+              <span class="hint">最大速度 <span data-jspeed-label>0.10</span> m/s</span>
+              <div class="button-row grid-two compact">
+                <button type="button" class="btn" data-jspeed-down>减速</button>
+                <button type="button" class="btn" data-jspeed-up>加速</button>
+              </div>
+            </div>
           </div>
         </div>
 

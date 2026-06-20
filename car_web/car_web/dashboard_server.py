@@ -10,6 +10,7 @@ import socket
 import subprocess
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -31,6 +32,13 @@ RESULT_TOPIC = '/result_img'
 EVENT_TOPIC = '/car_report/event'
 # 语音栏可选音色(qwen-tts);白名单用于校验 set_voice_params。
 TTS_VOICES = ['Serena', 'Neil', 'Cherry', 'Ethan', 'Chelsie', 'Dylan', 'Jada', 'Sunny']
+# 钉钉自定义机器人 webhook(与 car_report/car_notify 同一个),供紧急报警推送。
+DINGTALK_WEBHOOK_URL = (
+    'https://oapi.dingtalk.com/robot/send?'
+    'access_token=a6d04355c1119b47c1db727a3e3b54e58eb8dd36456313569b3db5f78c2e3c93'
+)
+# 紧急报警:先播语音警告、过 SIREN_PRE_ROLL 秒再起警笛,避免二者同灌喇叭盖掉语音。
+SIREN_PRE_ROLL_SEC = 6.0
 CMD_VEL_TOPIC = '/cmd_vel'
 WEB_VIDEO_PORT = 8080
 IK_TOPIC = '/ik_states'
@@ -143,7 +151,7 @@ class DashboardNode(Node):
         self.declare_parameter('http_host', '0.0.0.0')
         self.declare_parameter('http_port', 8000)
         self.declare_parameter('drive_timeout', 0.5)
-        self.declare_parameter('max_linear_speed', 0.2)
+        self.declare_parameter('max_linear_speed', 0.5)
         self.declare_parameter('max_angular_speed', 1.0)
         # 横移(麦轮 linear.y)最大速度,与前进同量级
         self.declare_parameter('max_lateral_speed', 0.2)
@@ -195,16 +203,25 @@ class DashboardNode(Node):
         self.patrol_state = ''
         self.gesture_state = ''
         self.gesture_on = False           # 手势控制为独立叠加开关,不占 active_feature
+        self._follow_by_gesture = False    # follow 是否由开手势连带起的(决定关手势时是否一并停)
         self.lidar_on = False             # 雷达独立开关(供 follow 避障)
         self.tts_on = False               # 语音播报开关
         self.asr_on = False               # 语音触发(麦克风聆听)开关
         self.tts_voice = 'Serena'         # 当前音色(qwen-tts)
         self.tts_volume = 90              # 当前播报音量 0-100
+        self.alarm_active = False         # 紧急报警是否在响
+        self.alarm_proc = None            # 警笛循环子进程
+        self.alarm_timer = None           # 60s 兜底自动解除定时器
+        self.siren_timer = None           # 语音警告后延时起警笛的定时器
+        self._siren_wav = '/tmp/patrol_siren.wav'
+        self._alarm_flag = '/tmp/.patrol_alarm'
         # 播报去抖状态
         self._last_announce = {}          # key -> 单调时间戳
         self._battery_warned = False      # 电量低只播一次,回升复位
         self._prev_patrol_state = ''      # 巡逻/跟随状态沿变化检测
         self._prev_gesture_state = ''
+        self._prev_gesture_cmd = ''       # 上次手势 last_cmd,用于变化沿播报
+        self._prev_gesture_fsm = ''       # 上次手势 FSM 态(sleep/armed/confirm),判唤醒沿
 
         self.cmd_pub = self.create_publisher(Twist, CMD_VEL_TOPIC, 5)
         self.servo_pub = self.create_publisher(JointState, IK_TOPIC, 5)
@@ -436,6 +453,7 @@ class DashboardNode(Node):
                 'tts_voice': self.tts_voice,
                 'tts_volume': self.tts_volume,
                 'tts_voices': TTS_VOICES,
+                'alarm_active': self.alarm_active,
                 'battery': self.battery_info(),
             }
 
@@ -506,11 +524,18 @@ class DashboardNode(Node):
         return self.status()
 
     def start_gesture(self):
-        """手势控制 = 纯输入设备,独立叠加开关,不占 active_feature。
-        只起 core(手势节点需要相机)+ gesture 节点,不带任何跟随。
-        手势命令发到 /patrol/command;若想让命令生效,另外开"人体跟随/云台追踪"
-        起 person_follow 作执行方即可。手势与追踪彻底解耦。"""
+        """手势控制 = 叠加开关。手势节点只发命令到 /patrol/command,执行方是 person_follow。
+        为让手势命令真正生效,这里连带把执行栈(yolo+person_follow)以**空闲**(auto_start=false)
+        起来:person_follow running=False 待命,机器人不会自己动,直到手势比出 follow/track_only 才激活。
+        底盘可能动,连带起避障雷达。关手势时若 follow 是这里带起的,一并收尾。"""
         self.start_core()
+        # 执行方:follow 未在跑则以空闲起(auto_start=false,见 follow_command),并记账由手势带起
+        if not self._is_running('follow'):
+            if not self._is_running('lidar'):
+                self.start_lidar()
+            self.start_process('follow', self.follow_command('follow', auto_start=False))
+            with self.lock:
+                self._follow_by_gesture = True
         self.start_process('gesture', self.gesture_command())
         with self.lock:
             self.gesture_on = True
@@ -518,11 +543,19 @@ class DashboardNode(Node):
         return self.status()
 
     def stop_gesture(self):
-        """只停手势节点,不动 follow(跟随是独立功能,可能仍需运行)。"""
+        """停手势节点;若 follow 是开手势时连带起的,则一并停(用户单独开的跟随不动)。"""
         self.stop_process('gesture')
         with self.lock:
             self.gesture_on = False
-            # 视频切回:若跟随在跑则看跟随画面,否则看相机
+            stop_follow = self._follow_by_gesture
+            self._follow_by_gesture = False
+        if stop_follow:
+            self.publish_patrol_command('stop')
+            self.stop_process('follow')
+            self.publish_stop()
+            self.stop_lidar()
+        with self.lock:
+            # 视频切回:若跟随仍在跑则看跟随画面,否则看相机
             if self._is_running('follow'):
                 self.current_video_topic = PERSON_FOLLOW_RESULT_TOPIC
             else:
@@ -711,6 +744,158 @@ class DashboardNode(Node):
         self.announce(text)
         return self.status()
 
+    def _ensure_siren_wav(self):
+        """首次需要时生成双音警笛 WAV(600/900Hz 交替,近满幅,~3s)。"""
+        if os.path.isfile(self._siren_wav):
+            return
+        import wave
+        import numpy as np
+        rate, seg = 44100, 0.4
+        tones = []
+        for _ in range(4):                       # 4 组交替 = ~3.2s
+            for freq in (900, 600):
+                t = np.linspace(0, seg, int(rate * seg), endpoint=False)
+                tones.append(0.9 * np.sin(2 * np.pi * freq * t))
+        wave_np = np.concatenate(tones)
+        pcm = (wave_np * 32767).astype('<i2')
+        with wave.open(self._siren_wav, 'wb') as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(pcm.tobytes())
+
+    def _grab_snapshot(self):
+        """从 web_video_server 抓一帧存进 car_report events/images,返回路径或 None。"""
+        try:
+            import urllib.request
+            base = Path(get_package_share_directory('car_report')).joinpath('data', 'events', 'images')
+            base.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            out = base / ('%s_emergency.jpg' % ts)
+            url = 'http://127.0.0.1:%d/snapshot?topic=%s' % (WEB_VIDEO_PORT, CAMERA_TOPIC)
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                out.write_bytes(resp.read())
+            return str(out)
+        except Exception as exc:
+            self.get_logger().warn('emergency snapshot failed: %s' % exc)
+            return None
+
+    def _location_str(self):
+        with self.lock:
+            pose = self.last_robot_pose
+        if pose:
+            return 'map(%.2f, %.2f) 朝向 %.0f°' % (pose[0], pose[1], math.degrees(pose[2]))
+        return '非导航模式不可用'
+
+    def _send_emergency_dingtalk(self, when, location, image_path):
+        """发紧急增援文字到钉钉(现场图在控制台看)。失败不阻断报警。"""
+        try:
+            import urllib.request
+            kw = '巡逻告警'
+            text = ('### %s - 紧急增援请求\n\n'
+                    '**🚨 发现紧急情况,请求增援!**\n\n'
+                    '- 时间:%s\n- 位置:%s\n- 现场图:见控制台「识别事件」栏\n\n'
+                    '> 关键词 %s' % (kw, when, location, kw))
+            payload = {'msgtype': 'markdown',
+                       'markdown': {'title': '%s - 紧急增援请求' % kw, 'text': text}}
+            data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+            req = urllib.request.Request(
+                DINGTALK_WEBHOOK_URL, data=data,
+                headers={'Content-Type': 'application/json;charset=utf-8'}, method='POST')
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                resp.read()
+            return True
+        except Exception as exc:
+            self.last_error = 'emergency dingtalk failed: %s' % exc
+            self.get_logger().warn(self.last_error)
+            return False
+
+    def trigger_emergency(self, payload=None):
+        """一键紧急报警:抓现场图、记事件、发钉钉、起警笛、语音警告、60s 兜底解除。"""
+        when = datetime.now().astimezone().isoformat(timespec='seconds')
+        location = self._location_str()
+        image_path = self._grab_snapshot()
+        # 1) 记一条强调显示的紧急事件(供网页事件栏带现场图突出)
+        event = {'event_type': '紧急报警', 'emergency': True, 'time': when,
+                 'location': location, 'class_name': '🚨 紧急报警'}
+        if image_path:
+            event['image_path'] = image_path
+        with self.lock:
+            self.events.append(event)
+            self.events = self.events[-50:]
+        # 2) 发钉钉(失败不阻断)
+        self._send_emergency_dingtalk(when, location, image_path)
+        # 3) 先播语音警告(清晰可懂),警笛延后起——同灌一个喇叭会盖掉语音
+        try:
+            with self.lock:
+                need_on = not self.tts_on
+            if need_on:
+                self.set_voice_toggle('tts', True)
+            elif not self._is_running('voice'):
+                self.start_process('voice', self.voice_command())
+            self.announce('警报!警报!发现紧急情况,增援已通知!')
+        except Exception as exc:
+            self.get_logger().warn('emergency tts failed: %s' % exc)
+        # 4) 标记报警 + 延时起警笛 + 60s 兜底自动解除
+        with self.lock:
+            self.alarm_active = True
+            if self.siren_timer is not None:
+                self.siren_timer.cancel()
+            self.siren_timer = threading.Timer(SIREN_PRE_ROLL_SEC, self._start_siren)
+            self.siren_timer.daemon = True
+            self.siren_timer.start()
+            if self.alarm_timer is not None:
+                self.alarm_timer.cancel()
+            self.alarm_timer = threading.Timer(60.0, self.stop_emergency)
+            self.alarm_timer.daemon = True
+            self.alarm_timer.start()
+        return self.status()
+
+    def _start_siren(self):
+        """拉满音量并循环播放警笛(子进程组,内置 60s 上限+标志位双保险)。
+        由 trigger 延时调起;若期间已解除报警则不再启动(防 pre-roll 竞态)。"""
+        with self.lock:
+            if not self.alarm_active:
+                return
+        try:
+            self._ensure_siren_wav()
+        except Exception as exc:
+            self.get_logger().error('siren wav gen failed: %s' % exc)
+            return
+        try:
+            open(self._alarm_flag, 'w').close()
+            subprocess.run(['pactl', 'set-sink-volume', '@DEFAULT_SINK@', '100%'],
+                           timeout=4, check=False)
+            sh = ('end=$((SECONDS+55)); while [ $SECONDS -lt $end ] && [ -f %s ]; '
+                  'do paplay %s || sleep 1; done' % (self._alarm_flag, self._siren_wav))
+            self.alarm_proc = subprocess.Popen(['bash', '-c', sh], preexec_fn=os.setsid)
+        except Exception as exc:
+            self.get_logger().error('siren start failed: %s' % exc)
+
+    def stop_emergency(self, payload=None):
+        """解除报警:停警笛、撤定时器(含未触发的 pre-roll 起笛定时器)、复位状态。"""
+        try:
+            if os.path.isfile(self._alarm_flag):
+                os.remove(self._alarm_flag)
+        except OSError:
+            pass
+        with self.lock:
+            proc = self.alarm_proc
+            self.alarm_proc = None
+            if self.siren_timer is not None:
+                self.siren_timer.cancel()
+                self.siren_timer = None
+            if self.alarm_timer is not None:
+                self.alarm_timer.cancel()
+                self.alarm_timer = None
+            self.alarm_active = False
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        return self.status()
+
     def _announce_patrol_transition(self, state):
         """巡逻/跟随状态沿变化时播报。
         去抖用**稳定相位**(running+mode+locked+target_present)比较,而非整条 JSON
@@ -742,15 +927,35 @@ class DashboardNode(Node):
         self.announce(text, key='patrol', min_interval=2.0)
 
     def _announce_gesture_transition(self, state):
-        prev = self._prev_gesture_state
-        self._prev_gesture_state = state or ''
-        if not state or state == prev:
+        """手势播报:解析 JSON,按 last_cmd 的**变化沿**播一次(根治"反复播开始跟随"——
+        旧逻辑靠整条 JSON 子串含 'follow' 判定,而 last_cmd 持续为 follow,任意帧变化都重播);
+        并按 FSM 由 sleep→armed 的沿播"手势已唤醒"。"""
+        if not state:
             return
-        low = str(state).lower()
-        if 'wake' in low or '唤醒' in state:
+        try:
+            s = json.loads(state)
+        except (ValueError, TypeError):
+            return
+        # 唤醒沿:sleep -> armed
+        fsm = str(s.get('state') or '')
+        prev_fsm = self._prev_gesture_fsm
+        self._prev_gesture_fsm = fsm
+        if fsm == 'armed' and prev_fsm != 'armed':
             self.announce('手势已唤醒', key='gesture', min_interval=1.5)
-        elif 'follow' in low or '跟随' in state:
-            self.announce('收到手势指令，开始跟随', key='gesture', min_interval=1.5)
+        # 命令变化沿:last_cmd 真正变化时按命令播一次
+        cmd = str(s.get('last_cmd') or '')
+        prev_cmd = self._prev_gesture_cmd
+        self._prev_gesture_cmd = cmd
+        if not cmd or cmd == prev_cmd:
+            return
+        text = {
+            'follow': '收到手势指令，开始跟随',
+            'track_only': '切换到云台追踪',
+            'stop': '已停止',
+            'relock': '重新锁定目标',
+        }.get(cmd)
+        if text:
+            self.announce(text, key='gesture', min_interval=1.5)
 
     def battery_callback(self, msg):
         with self.lock:
@@ -1652,11 +1857,11 @@ class DashboardNode(Node):
         ]
 
     @staticmethod
-    def follow_command(mode):
+    def follow_command(mode, auto_start=True):
         return [
             'ros2', 'launch', 'car_patrol', 'human_follow.launch.py',
             'mode:=%s' % mode,
-            'auto_start:=true'
+            'auto_start:=%s' % ('true' if auto_start else 'false')
         ]
 
     @staticmethod
@@ -2002,6 +2207,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 result = dashboard.set_voice_params(payload)
             elif self.path == '/api/voice/speak':
                 result = dashboard.speak_text(payload)
+            elif self.path == '/api/emergency/trigger':
+                result = dashboard.trigger_emergency(payload)
+            elif self.path == '/api/emergency/stop':
+                result = dashboard.stop_emergency(payload)
             else:
                 result = {'ok': False, 'error': 'not found'}
                 self.send_json(result, 404)
