@@ -1,6 +1,6 @@
 # car_report
 
-视觉识别事件记录与 GLM 巡逻报告模块，负责把 YOLO 识别结果转成可保存、可订阅、可总结的巡逻事件。
+视觉识别事件记录与 LLM 巡逻报告模块，负责把 YOLO 识别结果转成可保存、可订阅、可总结的巡逻事件。
 
 对应 `plan.md` 中的这些目标：
 
@@ -16,7 +16,7 @@
 - 从 `/car_yolo/object_detect` 接收 YOLO 结构化目标结果。
 - 从 `/camera/color/image_raw` 接收相机原图，用于事件截图留证。
 - 按置信度、类别过滤和冷却时间生成事件。
-- 保存事件 JSONL、事件截图，并可调用 BigModel `GLM-4V-Flash` 生成 Markdown 巡逻报告。
+- 保存事件 JSONL、事件截图，并可调用 LLM 大模型服务生成 Markdown 巡逻报告。
 
 当前默认运行数据目录为 `car_report/data/`。源码直接运行时写入源码目录下的 `car_report/data/`；ROS2 构建安装后默认写入已安装包的 `share/car_report/data/`。运行生成的事件、图片和报告会被源码目录下的 `.gitignore` 忽略，不会污染提交；也可以通过 `output_dir` 参数改到指定目录。
 
@@ -54,7 +54,7 @@
 - `/car_report/event`
   - ROS2 话题，类型 `std_msgs/msg/String`，内容为事件 JSON 字符串。
 - `car_report/data/reports/report_YYYYMMDD_HHMMSS.md`
-  - GLM 生成的 Markdown 巡逻报告。
+  - LLM 生成的 Markdown 巡逻报告。
 
 ## 格式用途
 
@@ -63,17 +63,17 @@
 | `/car_yolo/object_detect` | `interfaces/msg/ObjectsInfo` | 机器 | `event_recorder` 读取 YOLO 结构化识别结果 |
 | `/camera/color/image_raw` | `sensor_msgs/msg/Image` | 机器 | `event_recorder` 保存截图 |
 | `events_YYYYMMDD.jsonl` | JSONL | 机器为主，人也可查 | `report_generator` 和后续通知/检索模块读取 |
-| `events/images/*.jpg` | JPG | 人为主，机器也可复核 | 人工留证，`--mode vision` 时给 GLM 图片理解 |
+| `events/images/*.jpg` | JPG | 人为主，机器也可复核 | 人工留证，`--mode vision` 时给视觉 LLM 图片理解 |
 | `/car_report/event` | `std_msgs/msg/String`，内容为 JSON | 机器 | `car_notify` 等下游节点实时订阅 |
 | `reports/report_*.md` | Markdown | 人 | 比赛展示、巡逻记录、人工复核 |
 
 ## 大模型使用边界
 
 - `event_recorder` 阶段不调用大模型，只负责记录结构化事件和截图。
-- `report_generator --mode text` 使用文本对话：只把事件 JSON 摘要发给 GLM，不发送图片。
-- `report_generator --mode vision` 使用图片理解：在事件摘要外，额外发送最多 `--max-images` 张事件截图给 GLM 复核画面。
+- `report_generator --mode text` 使用文本对话：只把事件 JSON 摘要发给 `car_llm` 的 `llm_model`，不发送图片。
+- `report_generator --mode vision` 使用图片理解：在事件摘要外，额外发送最多 `--max-images` 张事件截图给 `car_llm` 的 `vision_model` 复核画面。
 
-API Key 当前按私有仓库临时方案处理，写死在 `car_report/car_report/report_generator.py` 的 `BIGMODEL_API_KEY` 中。
+LLM 配置统一维护在 `car_llm/launch/car_llm.launch.py`，`report_generator` 默认读取其中的 `api_key`、`base_url`、`llm_model` 和 `vision_model`。如需临时测试其他服务，可用 `--api-key`、`--base-url`、`--model` 或 `--endpoint` 覆盖。
 
 ## ROS2 环境运行
 
@@ -97,7 +97,7 @@ ros2 launch car_report car_report_yolo.launch.py
 ros2 launch car_report car_report_yolo.launch.py yolo_show_result:=true
 ```
 
-单独测试 GLM API 连通性：
+单独测试 LLM API 连通性：
 
 ```bash
 ros2 run car_report report_generator --api-test
@@ -159,9 +159,11 @@ ros2 run car_report report_generator --mode vision --max-images 3
 - `--events-file`：指定某个 `events_YYYYMMDD.jsonl`；不填则读取最新事件文件。
 - `--mode`：`text` 或 `vision`，默认 `text`。
 - `--max-images`：图片理解模式最多发送几张图，默认 `3`。
-- `--max-image-bytes`：发送给 GLM 的单张图片最大字节数，默认 `5242880`。
-- `--model`：BigModel 模型 ID，默认 `glm-4v-flash`。
-- `--endpoint`：BigModel 对话补全接口。
+- `--max-image-bytes`：发送给 LLM 的单张图片最大字节数，默认 `5242880`。
+- `--api-key`：临时覆盖 LLM API Key；默认读取 `car_llm/launch/car_llm.launch.py`。
+- `--base-url`：临时覆盖 OpenAI-compatible base URL；默认读取 `car_llm/launch/car_llm.launch.py`。
+- `--model`：临时覆盖模型；默认 `text` 用 `llm_model`，`vision` 用 `vision_model`。
+- `--endpoint`：临时覆盖完整对话补全接口；默认由 `base_url + /chat/completions` 拼出。
 - `--temperature`：生成随机性，默认 `0.2`。
 - `--timeout`：HTTP 超时时间，默认 `60` 秒。
 
@@ -184,11 +186,11 @@ ros2 run car_report report_generator
 - `car_report_yolo.launch.py` 可启动 `car_yolo + event_recorder`。
 - `/car_yolo/object_detect` 可被 `event_recorder` 接收并转成 `/car_report/event`。
 - 事件 JSONL 和截图可正常生成。
-- `report_generator` 的 GLM API 调用已验证可用。
+- `report_generator` 的 LLM API 调用已验证可用。
 
 运行时仍需按现场情况关注：
 
 - `/camera/color/image_raw` 是否持续有相机图像。
 - RKNN 模型文件是否和 `yolo_model` 对应。
 - 截图保存和压缩对实时性能的影响。
-- 小车网络是否能稳定访问 BigModel API。
+- 小车网络是否能稳定访问 LLM API。

@@ -12,7 +12,7 @@ def generate_launch_description():
     # ============================ 通用参数 ============================ #
     api_key_arg = DeclareLaunchArgument(
         'api_key', # 要求语音转文字模型、视觉理解模型、语言大模型、文字转语音模型都是同一家提供，一个api_key支持所有多模态大模型
-        default_value='sk-a07b9af862154c89a34741c80db78f7a', # 记得替换api key
+        default_value='sk-005d95b21722404e9bb7e63ef4f9ed64', # 记得替换api key
         description='API Key for LLM service'
     )
 
@@ -52,6 +52,13 @@ def generate_launch_description():
         'llm_model',
         default_value='qwen-flash', # 语言大模型：qwen-flash(快/省,默认)、qwen-plus(均衡)、qwen-max(质量最高)
         description='LLM model for command parsing'
+    )
+
+    # ============================ 视觉理解大模型参数 ============================ #
+    vision_model_arg = DeclareLaunchArgument(
+        'vision_model',
+        default_value='qwen3-vl-plus', # 视觉理解大模型：用于 car_report 图文报告，需与 api_key/base_url 属于同一家服务商
+        description='Vision model for image understanding and report review'
     )
     
     # ============================ 文字转语音（即语音生成）大模型参数 ============================ #
@@ -140,6 +147,7 @@ def generate_launch_description():
     ld.add_action(baudrate_arg)
     ld.add_action(speaker_sound_volume_arg)
     ld.add_action(llm_model_arg)
+    ld.add_action(vision_model_arg)
     ld.add_action(tts_voice_arg)
     ld.add_action(tts_model_arg)
     ld.add_action(asr_model_arg)
