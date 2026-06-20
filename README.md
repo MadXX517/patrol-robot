@@ -1,31 +1,79 @@
-# 巡逻小车 ROS2 项目
+# 基于飞凌 ELF 2 RK3588开发板的双模式军警巡逻辅助机器人
 
-本仓库是 RK3588 巡逻小车的 ROS2 工作空间源码。当前网页操作台已经可视化包装了这些功能：
+本仓库是 RK3588 巡逻小车的 ROS2 工作空间源码目录，围绕移动巡逻平台实现底盘控制、相机/雷达接入、YOLO/RKNN 视觉识别、人体跟随、云台追踪、手势控制、语音交互、建图导航、事件记录、钉钉告警、LLM 报告生成和网页操作台。
 
-- `car_base`：底盘串口、深度相机、网页视频服务。
-- `car_yolo`：YOLO/RKNN 目标识别和 `/result_img` 置信框画面。
-- `car_report`：视觉事件记录、截图保存、LLM 文本/图文报告生成。
-- `car_notify`：订阅视觉事件并通过钉钉机器人推送告警。
+推荐日常使用入口是 `car_web` 网页操作台：它把多个 ROS2 功能包包装到浏览器页面里，负责统一启动、停止和避免节点竞争。各功能包仍然可以单独运行和排查，根 README 只做仓库总入口，具体参数以各子包 README 和 launch 文件为准。
 
-## 最常用流程
+## 系统架构
 
-进入工作空间根目录，不是 `src` 目录：
+```text
+硬件与基础链路
+  car_base / OrbbecSDK_ROS2 / depend
+  -> 底盘串口、深度相机、雷达、IMU、URDF、EKF、web_video_server
+
+感知与行为
+  car_yolo
+  -> YOLO/RKNN 目标检测，发布 /car_yolo/object_detect 与 /result_img
+
+  car_patrol
+  -> 人体跟随、云台追踪、手势控制，使用 /cmd_vel、/ik_states、/patrol/command
+
+  car_nav2 / car_slam / car_rviz2
+  -> Cartographer/SLAM、Nav2、地图保存、定位导航、RViz 可视化
+
+交互与上报
+  car_report
+  -> 订阅 YOLO 结果，生成事件 JSONL、截图和 Markdown 报告
+
+  car_notify
+  -> 订阅 /car_report/event，通过钉钉 webhook 推送 markdown 告警
+
+  car_voice / car_llm
+  -> 语音触发、语音播报、ASR/LLM/TTS 参数与大模型能力
+
+统一操作层
+  car_web
+  -> 浏览器操作台，包装遥控、视频、功能中心、跟随、手势、语音、建图导航、报告和通知
+```
+
+## 功能总览
+
+| 功能 | 主要包 | 说明 |
+| --- | --- | --- |
+| 底盘与传感器基础 | `car_base` | 启动底盘串口、深度相机、雷达、IMU、URDF、EKF 等基础节点 |
+| 网页视频流 | `depend/web_video_server`、`car_web` | 将 ROS 图像话题以 MJPEG 方式在浏览器查看 |
+| YOLO/RKNN 识别 | `car_yolo` | 端侧目标检测，输出结构化目标和带框图像 |
+| 事件记录与报告 | `car_report` | 把识别结果转成事件日志、截图和 LLM 巡逻报告 |
+| 钉钉告警 | `car_notify` | 订阅事件 JSON，按阈值和冷却规则推送钉钉机器人 |
+| 人体跟随 | `car_patrol` | 锁定目标人，结合视觉和距离信息控制底盘保持跟随 |
+| 云台追踪 | `car_patrol` | 底盘不动时用云台跟踪目标 |
+| 手势控制 | `car_patrol` | 通过手势识别发送跟随、追踪、停止、重锁等高层指令 |
+| 语音交互 | `car_voice`、`car_llm` | 支持语音触发、语音播报和大模型对话/控制能力 |
+| 建图导航 | `car_slam`、`car_nav2` | 支持建图、地图保存、定位、目标点导航和巡航基础 |
+| Web 统一操作 | `car_web` | 统一管理 core、跟随/巡检、建图导航、语音、告警和报告 |
+| 机器人模型与仿真 | `car_urdf`、`car_moveit`、`car_rviz2` | URDF、MoveIt、RViz、Gazebo/可视化相关配置 |
+| 传统视觉任务 | `car_vision`、`car_app` | 颜色、AR、辅助导航等历史/扩展视觉任务 |
+| 自定义消息 | `car_msg`、`depend/interfaces` | 蜂鸣器、超声、目标检测等 ROS2 消息接口 |
+
+## 快速开始
+
+进入工作空间根目录，不是在 `src` 目录里构建：
 
 ```bash
 cd ~/Desktop/ROS2/SRC_20260427
 ```
 
-第一次运行或代码有改动后构建：
+第一次运行或代码改动后构建：
 
 ```bash
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-如果只改了网页操作台，可以只构建 `car_web`：
+如果只改了某几个包，可以按需选择构建，例如：
 
 ```bash
-colcon build --symlink-install --packages-select car_web
+colcon build --symlink-install --packages-select car_web car_report car_notify
 source install/setup.bash
 ```
 
@@ -35,7 +83,7 @@ source install/setup.bash
 ros2 launch car_web car_web.launch.py
 ```
 
-浏览器打开：
+浏览器访问：
 
 ```text
 http://RK3588_IP:8000
@@ -47,65 +95,77 @@ http://RK3588_IP:8000
 http://192.168.0.102:8000
 ```
 
-打开网页后，普通前方画面会自动启动。后续普通操作、功能中心、识别记录、钉钉通知、遥控、底盘复位、云台控制和报告生成都在网页按钮里完成。
+如果已经配置自动 source，可以不手动执行 `source install/setup.bash`。如果出现 `package 'xxx' not found`，先 source；仍找不到时重新 build。
 
-如果同学已经配置了自动 source，可以不手动执行 `source install/setup.bash`。如果出现 `package 'car_web' not found`，先执行 source；还不行就重新 build。
+## Web 操作台
 
-## 模块单独测试
+`car_web` 是推荐的统一入口，详细说明见 [car_web/README.md](car_web/README.md)。
 
-如果网页里某一块不正常，先在网页点“全部停止”，或者关掉 `car_web` 终端，再按下面拆开测，避免相机、底盘串口、8080 端口或 YOLO 节点竞争。
+网页后端会自动或按按钮启动相关 ROS2 进程：
 
-终端 1：只启动基础链路，包括底盘串口、相机和 `web_video_server`：
+- core：底盘串口、深度相机、`web_video_server`。
+- 跟随/巡检：普通遥控、YOLO 识别、事件记录、钉钉、报告、人体跟随、云台追踪、手势控制、语音播报。
+- 建图导航：建图、保存地图、加载地图、定位、导航、巡航点管理。
+- 安全控制：停止、底盘复位、云台回中、紧急报警、低电量状态显示。
+
+启动 `car_web` 后，不要再手工重复启动相机、底盘串口、`web_video_server`、YOLO 或 Nav2 相关 launch，避免设备、端口和话题竞争。需要拆开排查时，先在网页点“全部停止”，或关闭 `car_web` 终端。
+
+## 常用单模块命令
+
+### 基础链路
+
+只启动底盘串口、深度相机和网页视频服务：
 
 ```bash
 ros2 launch car_web car_web_core.launch.py
 ```
 
-终端 2：检查普通相机是否有发布者和帧率：
+检查相机图像：
 
 ```bash
 ros2 topic info -v /camera/color/image_raw
 ros2 topic hz /camera/color/image_raw
 ```
 
-浏览器：先打开视频服务首页，看它列出了哪些图像话题：
+浏览器查看视频服务首页：
 
 ```text
 http://RK3588_IP:8080/
 ```
 
-浏览器：直接看普通相机流：
+普通相机流：
 
 ```text
 http://RK3588_IP:8080/stream?topic=/camera/color/image_raw&type=mjpeg
 ```
 
-终端 3：在终端 1 保持运行时，只启动 YOLO + report 识别记录链路：
+### YOLO 识别与事件记录
+
+启动 YOLO + 事件记录：
 
 ```bash
-ros2 launch car_report car_report_yolo.launch.py yolo_pub_result_img:=true yolo_conf_thres:=0.5 min_score:=0.5
+ros2 launch car_report car_report_yolo.launch.py yolo_pub_result_img:=true
 ```
 
-终端 4：检查 YOLO 画面和事件是否有输出：
+查看识别结果和事件：
 
 ```bash
-ros2 topic hz /result_img
+ros2 topic echo /car_yolo/object_detect
 ros2 topic echo /car_report/event
 ```
 
-浏览器：直接看带置信框的 YOLO 画面：
+查看带框图像：
 
 ```text
 http://RK3588_IP:8080/stream?topic=/result_img&type=mjpeg
 ```
 
-减少画面杂框主要调 `yolo_conf_thres`，减少事件/通知主要调 `min_score`、`target_classes`、`cooldown_sec`。`target_classes` 只过滤事件和通知，不会改变 `/result_img` 上已经画出的 YOLO 框。
+### 钉钉与 LLM 报告
 
-看 YOLO 和 report 是否真的有输出：
+单独测试钉钉 webhook：
 
 ```bash
-ros2 topic echo /car_yolo/object_detect
-ros2 topic echo /car_report/event
+ros2 run car_notify dingtalk_notifier --webhook-test
 ```
 
 单独测试 LLM API：
@@ -114,77 +174,133 @@ ros2 topic echo /car_report/event
 ros2 run car_report report_generator --api-test
 ```
 
-单独测试钉钉 webhook：
+已有事件日志后生成报告：
 
 ```bash
-ros2 run car_notify dingtalk_notifier --webhook-test
+ros2 run car_report report_generator --mode text
+ros2 run car_report report_generator --mode vision --max-images 3
 ```
-## 网页操作台
 
-详细说明见：`car_web/README.md`。
+### 人体跟随、云台追踪和手势
 
-`car_web` 的后端会代替终端启动和关闭相关节点。启动 Web 后，不要再同时手工启动这些容易竞争的命令：
+人体跟随：
 
 ```bash
-ros2 launch car_base car_app.launch.py
-ros2 launch car_base car_camera.launch.py
-ros2 launch car_report car_report_yolo.launch.py
-ros2 launch car_notify dingtalk_notify.launch.py
-ros2 run web_video_server web_video_server
+ros2 launch car_patrol human_follow.launch.py mode:=follow auto_start:=true
 ```
 
-重复启动可能导致相机、底盘串口、8080 视频端口或 YOLO 节点冲突。
-
-## 主要目录
-
-- `car_base/`：底盘串口、相机、雷达、URDF、EKF 等硬件基础。
-- `car_yolo/`：YOLO/RKNN 识别，发布 `/car_yolo/object_detect` 和可选 `/result_img`。
-- `car_report/`：把 YOLO 结果记录为事件，保存 JSONL、截图，并生成 LLM 巡逻报告。
-- `car_notify/`：订阅 `/car_report/event`，通过钉钉机器人推送告警。
-- `car_web/`：网页操作台，包装遥控、视频、功能中心、事件记录、通知和报告生成。
-- `car_llm/`：语音和大模型控制相关代码。
-- `car_vision/`、`car_app/`：视觉任务、跟随、颜色识别、手势、导航辅助等功能。
-- `depend/`、`OrbbecSDK_ROS2/`：第三方 ROS2 依赖和相机相关包。
-
-## 常见检查
-
-查看相机图像话题：
+云台追踪：
 
 ```bash
-ros2 topic hz /camera/color/image_raw
+ros2 launch car_patrol gimbal_track.launch.py auto_start:=true
 ```
 
-查看 YOLO 识别结果：
+手势控制：
 
 ```bash
-ros2 topic echo /car_yolo/object_detect
+ros2 launch car_patrol gesture_command.launch.py
 ```
 
-查看事件记录输出：
+常用检查：
 
 ```bash
-ros2 topic echo /car_report/event
+ros2 topic echo /person_follow/state
+ros2 topic echo /gesture_command/gesture
+ros2 topic echo /patrol/command
 ```
 
-单独测试 LLM API：
+### 语音
+
+启动语音助手：
 
 ```bash
-ros2 run car_report report_generator --api-test
+ros2 launch car_voice voice.launch.py enable_tts:=true enable_asr:=true
 ```
 
-单独测试钉钉 webhook：
+常用话题：
 
 ```bash
-ros2 run car_notify dingtalk_notifier --webhook-test
+ros2 topic echo /voice/announce
+ros2 topic echo /voice/control
 ```
+
+### 建图导航
+
+启动 Nav2/SLAM 组合入口：
+
+```bash
+ros2 launch car_nav2 car_nav2.launch.py
+```
+
+保存地图：
+
+```bash
+ros2 launch car_nav2 save_map.launch.py
+```
+
+常用检查：
+
+```bash
+ros2 topic echo /map
+ros2 topic echo /scan
+ros2 topic echo /odom_combined
+ros2 action list
+```
+
+## 目录结构
+
+| 目录 | 作用 |
+| --- | --- |
+| `car_base/` | 底盘串口、相机、雷达、URDF、IMU、EKF 等硬件基础 |
+| `car_yolo/` | YOLO/RKNN 目标检测节点、模型配置和识别结果发布 |
+| `car_patrol/` | 人体跟随、云台追踪、手势识别和巡逻控制 |
+| `car_report/` | 视觉事件记录、截图留证、Markdown 报告生成 |
+| `car_notify/` | 钉钉机器人事件推送 |
+| `car_web/` | 浏览器操作台和后端进程管理 |
+| `car_voice/` | 语音助手节点，负责语音触发和语音播报 |
+| `car_llm/` | LLM/ASR/TTS 参数和大模型相关能力 |
+| `car_nav2/` | Nav2 参数、地图、导航启动入口 |
+| `car_slam/` | Cartographer、GMapping、RTAB-Map 等建图相关包 |
+| `car_rviz2/` | RViz 可视化配置和启动入口 |
+| `car_vision/` | 颜色、AR、视觉辅助导航等扩展视觉功能 |
+| `car_app/`、`car_keyboard/` | 应用层和键盘控制相关历史/辅助入口 |
+| `car_urdf/`、`car_moveit/` | 机器人模型、仿真和机械臂/MoveIt 相关配置 |
+| `car_msg/`、`depend/interfaces/` | 自定义 ROS2 消息接口 |
+| `depend/` | 第三方 ROS2 依赖，如 `web_video_server`、雷达、TEB、Explore 等 |
+| `OrbbecSDK_ROS2/` | Orbbec/Astra 深度相机相关驱动包 |
+| `yeabot_tools/` | 辅助工具脚本 |
+
+## 常见排查
+
+查看当前节点：
+
+```bash
+ros2 node list
+```
+
+查看关键话题：
+
+```bash
+ros2 topic list | grep -E "camera|image|yolo|report|patrol|gesture|voice|scan|map|cmd_vel"
+```
+
+相机被占用时，通常是之前的相机节点没有退出干净，或手工启动的 launch 与 `car_web` 重复。先关闭相关终端，再检查：
+
+```bash
+ps aux | grep -E "astra_camera|web_video_server|yolo_detect|car_base|car_web" | grep -v grep
+```
+
+如果网页没有画面，先直接打开 `web_video_server` 的视频直链，判断是网页嵌入问题还是 ROS 图像话题没有输出。
+
+如果 YOLO 有框但事件少，优先检查 `min_score`、`target_classes`、`cooldown_sec`。如果画面框太多，优先检查 YOLO 的置信度阈值和类别过滤配置。
+
+如果语音、报告或钉钉失败，先确认小车网络可访问对应云服务，再分别运行 `--api-test` 或 `--webhook-test`。
 
 ## 运行注意
 
-- 每次新增 ROS2 包、改 `setup.py`、改 `package.xml`、改 launch 文件后，都要重新 `colcon build`。
-- 推荐继续使用 `--symlink-install`；网页静态文件已兼容这种构建方式。
-- 只改 Python、HTML、CSS、JS 时，`--symlink-install` 下通常能直接反映；上车演示前仍建议重新 build 一次。
-- 网页操作台 v1 只接遥控、底盘复位、云台控制、普通视频、YOLO 事件记录、钉钉通知和报告；导航、SLAM、语音、机械臂后续稳定后再接入。
-- 小车遥控有风险，测试时先架空轮子或确保周围安全。
-
-
-
+- 每次新增 ROS2 包、修改 `setup.py`、`package.xml` 或 launch 文件后，都要重新 `colcon build`。
+- 推荐使用 `--symlink-install`，方便 Python、HTML、CSS、JS 等源码改动快速生效。
+- `car_web` 只管理它自己启动的进程，不会主动杀掉你手动启动的其他 ROS2 节点。
+- 相机、底盘串口、8080 视频端口、YOLO 节点和 Nav2 栈都不建议重复启动。
+- 遥控和跟随测试前确认周围安全，必要时先架空轮子。
+- API Key、Webhook 等敏感配置提交前需要确认是否符合当前仓库的私有/公开策略。
