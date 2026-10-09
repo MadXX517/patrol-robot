@@ -45,6 +45,12 @@ openai==1.84.0
 pyserial==3.4
 
 #### 使用说明
+零.配置 API Key（代码中不保存密钥）
+```
+export DASHSCOPE_API_KEY="<阿里云百炼 API Key>"
+```
+建议写入 `~/.bashrc`。launch 也可用 `api_key:=...` 临时覆盖，非 ROS2 环境可用 `--api_key ...`。
+
 一.在树莓派jetson等设备上运行ros2
 1.car_llm文件夹放入工作空间的src文件夹中
 2.colcon build编译源码

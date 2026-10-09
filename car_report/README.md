@@ -73,7 +73,9 @@
 - `report_generator --mode text` 使用文本对话：只把事件 JSON 摘要发给 `car_llm` 的 `llm_model`，不发送图片。
 - `report_generator --mode vision` 使用图片理解：在事件摘要外，额外发送最多 `--max-images` 张事件截图给 `car_llm` 的 `vision_model` 复核画面。
 
-LLM 配置统一维护在 `car_llm/launch/car_llm.launch.py`，`report_generator` 默认读取其中的 `api_key`、`base_url`、`llm_model` 和 `vision_model`。如需临时测试其他服务，可用 `--api-key`、`--base-url`、`--model` 或 `--endpoint` 覆盖。
+LLM 配置统一维护在 `car_llm/launch/car_llm.launch.py`，`report_generator` 默认读取其中的 `base_url`、`llm_model` 和 `vision_model`。API Key 不写在代码里，从环境变量 `DASHSCOPE_API_KEY` 读取（`export DASHSCOPE_API_KEY=你的key`）。如需临时测试其他服务，可用 `--api-key`、`--base-url`、`--model` 或 `--endpoint` 覆盖。
+
+报告发送钉钉时使用环境变量 `DINGTALK_WEBHOOK_URL`（与 `car_notify` 共用），也可用 `--webhook-url` 覆盖。
 
 ## ROS2 环境运行
 
@@ -160,7 +162,7 @@ ros2 run car_report report_generator --mode vision --max-images 3
 - `--mode`：`text` 或 `vision`，默认 `text`。
 - `--max-images`：图片理解模式最多发送几张图，默认 `3`。
 - `--max-image-bytes`：发送给 LLM 的单张图片最大字节数，默认 `5242880`。
-- `--api-key`：临时覆盖 LLM API Key；默认读取 `car_llm/launch/car_llm.launch.py`。
+- `--api-key`：临时覆盖 LLM API Key；默认读取环境变量 `DASHSCOPE_API_KEY`。
 - `--base-url`：临时覆盖 OpenAI-compatible base URL；默认读取 `car_llm/launch/car_llm.launch.py`。
 - `--model`：临时覆盖模型；默认 `text` 用 `llm_model`，`vision` 用 `vision_model`。
 - `--endpoint`：临时覆盖完整对话补全接口；默认由 `base_url + /chat/completions` 拼出。

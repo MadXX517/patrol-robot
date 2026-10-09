@@ -2,13 +2,15 @@
 # 用法: ros2 launch car_voice voice.launch.py enable_tts:=true enable_asr:=true
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, EnvironmentVariable
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     args = [
-        DeclareLaunchArgument('api_key', default_value='sk-005d95b21722404e9bb7e63ef4f9ed64'),
+        # API Key 默认读取环境变量 DASHSCOPE_API_KEY,也可 api_key:=... 覆盖
+        DeclareLaunchArgument('api_key',
+                              default_value=EnvironmentVariable('DASHSCOPE_API_KEY', default_value='')),
         DeclareLaunchArgument('llm_model', default_value='qwen-flash'),
         DeclareLaunchArgument('tts_voice', default_value='Serena'),
         DeclareLaunchArgument('tts_model', default_value='qwen3-tts-flash'),

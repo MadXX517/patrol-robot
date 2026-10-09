@@ -2,6 +2,7 @@
 # encoding: utf-8
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -10,10 +11,9 @@ from datetime import datetime
 
 
 DEFAULT_EVENT_TOPIC = "/car_report/event"
-DEFAULT_WEBHOOK_URL = (
-    "https://oapi.dingtalk.com/robot/send?"
-    "access_token=a6d04355c1119b47c1db727a3e3b54e58eb8dd36456313569b3db5f78c2e3c93"
-)
+# 钉钉自定义机器人 webhook 从环境变量 DINGTALK_WEBHOOK_URL 读取,不在代码中保存 token。
+# 形如 https://oapi.dingtalk.com/robot/send?access_token=<你的token>
+DEFAULT_WEBHOOK_URL = os.environ.get("DINGTALK_WEBHOOK_URL", "")
 DEFAULT_KEYWORD = "巡逻告警"
 DEFAULT_TIMEOUT = 10.0
 

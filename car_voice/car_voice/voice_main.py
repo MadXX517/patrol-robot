@@ -79,7 +79,8 @@ def _truthy(v):
 
 def build_args():
     ap = argparse.ArgumentParser(description='car_voice 语音助手')
-    ap.add_argument('--api_key', default='sk-005d95b21722404e9bb7e63ef4f9ed64')
+    # API Key 默认从环境变量 DASHSCOPE_API_KEY 读取,也可用 --api_key 显式传入
+    ap.add_argument('--api_key', default=os.environ.get('DASHSCOPE_API_KEY', ''))
     ap.add_argument('--base_url', default='https://dashscope.aliyuncs.com/compatible-mode/v1')
     ap.add_argument('--yaml_file', default='chat_prompt_patrol.yaml')
     ap.add_argument('--llm_model', default='qwen-flash')

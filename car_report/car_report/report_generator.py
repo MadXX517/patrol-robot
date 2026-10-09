@@ -21,10 +21,8 @@ DEFAULT_LLM_CONFIG = {
     'config_source': '',
 }
 # 钉钉自定义机器人(与 car_notify/dingtalk_notifier 同一个)。报告生成后可选发送。
-DINGTALK_WEBHOOK_URL = (
-    'https://oapi.dingtalk.com/robot/send?'
-    'access_token=a6d04355c1119b47c1db727a3e3b54e58eb8dd36456313569b3db5f78c2e3c93'
-)
+# webhook 从环境变量 DINGTALK_WEBHOOK_URL 读取,不在代码中保存 token。
+DINGTALK_WEBHOOK_URL = os.environ.get('DINGTALK_WEBHOOK_URL', '')
 DINGTALK_KEYWORD = '巡逻告警'
 DINGTALK_MAX_TEXT = 18000  # 钉钉单条 markdown 上限约 20000 字节,留余量并截断
 API_TEST_EVENT = {
@@ -385,7 +383,9 @@ def parse_args(argv=None):
 
 def resolve_llm_settings(args):
     defaults = load_llm_defaults()
-    api_key = args.api_key or defaults.get('api_key', '')
+    # 优先级: --api-key > 环境变量 DASHSCOPE_API_KEY > car_llm.launch.py 中的字面量默认值
+    api_key = (args.api_key or os.environ.get('DASHSCOPE_API_KEY', '')
+               or defaults.get('api_key', ''))
     base_url = args.base_url or defaults.get('base_url', '')
     endpoint = args.endpoint or build_chat_endpoint(base_url)
     model = args.model or (

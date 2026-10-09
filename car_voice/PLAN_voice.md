@@ -76,7 +76,7 @@
 ### 阶段 0:基础验证(0.5d)
 - [ ] 板端选定 USB CODEC(card3)为麦、nau8822(card1)为外放,测 TTSPlayer.say
       与 RealTimeASR 收音(显式传 input/output_device_index,确认无回授)
-- [ ] 确认 API Key(沿用 car_llm 默认或独立配置)
+- [ ] 确认 API Key(与 car_llm 共用环境变量 DASHSCOPE_API_KEY,或 api_key:=... 单独传入)
 
 ### 阶段 1:新 prompt + web 执行器(1.5d)
 - [ ] 写 `chat_prompt_patrol.yaml`:function 枚举=上表,message 保留;context 写功能说明
@@ -131,5 +131,5 @@
 6. Web 开关:**拆"语音播报"/"语音触发"两个**(默认单进程内子开关实现)
 
 ## 开工前唯一待确认
-- API Key:沿用 car_llm 默认 key,还是用独立的?(不影响动工,可先用默认)
+- API Key:已定为从环境变量 DASHSCOPE_API_KEY 读取(与 car_llm 共用),代码中不保存 key
 

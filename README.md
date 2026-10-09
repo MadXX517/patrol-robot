@@ -52,7 +52,7 @@
 | 建图导航 | `car_slam`、`car_nav2` | 支持建图、地图保存、定位、目标点导航和巡航基础 |
 | Web 统一操作 | `car_web` | 统一管理 core、跟随/巡检、建图导航、语音、告警和报告 |
 | 机器人模型与仿真 | `car_urdf`、`car_moveit`、`car_rviz2` | URDF、MoveIt、RViz、Gazebo/可视化相关配置 |
-| 传统视觉任务 | `car_vision`、`car_app` | 颜色、AR、辅助导航等历史/扩展视觉任务 |
+| 视觉公共库 | `car_vision` | PID、坐标变换、机械臂逆解、手势模型等公共模块，被 `car_patrol` 等复用 |
 | 自定义消息 | `car_msg`、`depend/interfaces` | 蜂鸣器、超声、目标检测等 ROS2 消息接口 |
 
 ## 快速开始
@@ -94,6 +94,8 @@ http://RK3588_IP:8000
 ```text
 http://192.168.0.102:8000
 ```
+
+`192.168.0.102` 是在开发时所用路由器的 DHCP 设置里，把小车网卡 MAC 地址和这个 IP 绑定后得到的固定地址，只在那台路由器下有效。换了路由器或网络后，小车会重新获取地址，需要在新路由器的管理页面里给小车重新做一次 MAC 与 IP 的绑定（也就是静态 DHCP 分配或地址保留），或者在小车上用 `ip addr` 查到当前 IP 后再访问。
 
 如果已经配置自动 source，可以不手动执行 `source install/setup.bash`。如果出现 `package 'xxx' not found`，先 source；仍找不到时重新 build。
 
@@ -161,6 +163,15 @@ http://RK3588_IP:8080/stream?topic=/result_img&type=mjpeg
 ```
 
 ### 钉钉与 LLM 报告
+
+密钥均通过环境变量提供，代码中不保存。运行前在小车上设置（建议写入 `~/.bashrc`）：
+
+```bash
+export DASHSCOPE_API_KEY="<阿里云百炼 API Key>"          # car_llm / car_voice / car_report
+export DINGTALK_WEBHOOK_URL="https://oapi.dingtalk.com/robot/send?access_token=<你的token>"  # car_notify / car_report / car_web
+```
+
+也可在 launch 时用 `api_key:=...`、`webhook_url:=...` 临时覆盖。
 
 单独测试钉钉 webhook：
 
@@ -260,10 +271,11 @@ ros2 action list
 | `car_voice/` | 语音助手节点，负责语音触发和语音播报 |
 | `car_llm/` | LLM/ASR/TTS 参数和大模型相关能力 |
 | `car_nav2/` | Nav2 参数、地图、导航启动入口 |
-| `car_slam/` | Cartographer、GMapping、RTAB-Map 等建图相关包 |
+| `car_slam/` | 建图包：`car_cartographer`（本项目使用的 Cartographer 2D）和 `car_gmapping`（备用） |
 | `car_rviz2/` | RViz 可视化配置和启动入口 |
-| `car_vision/` | 颜色、AR、视觉辅助导航等扩展视觉功能 |
-| `car_app/`、`car_keyboard/` | 应用层和键盘控制相关历史/辅助入口 |
+| `car_vision/` | 视觉公共库（`pid`、`common`、`transform`、`arm_ik_sdk`、MediaPipe 手势模型）及 RViz 多点导航 `nav2_waypoints`；其余颜色/AR/二维码等节点为厂商模板自带，本项目未使用 |
+| `car_app/` | 厂商模板自带的机械臂应用示例（颜色抓取、码垛等），本项目未使用 |
+| `car_keyboard/` | 键盘遥控节点，调试时可替代网页遥控 |
 | `car_urdf/`、`car_moveit/` | 机器人模型、仿真和机械臂/MoveIt 相关配置 |
 | `car_msg/`、`depend/interfaces/` | 自定义 ROS2 消息接口 |
 | `depend/` | 第三方 ROS2 依赖，如 `web_video_server`、雷达、TEB、Explore 等 |
@@ -300,7 +312,7 @@ ps aux | grep -E "astra_camera|web_video_server|yolo_detect|car_base|car_web" | 
 
 - 每次新增 ROS2 包、修改 `setup.py`、`package.xml` 或 launch 文件后，都要重新 `colcon build`。
 - 推荐使用 `--symlink-install`，方便 Python、HTML、CSS、JS 等源码改动快速生效。
-- `car_web` 只管理它自己启动的进程，不会主动杀掉你手动启动的其他 ROS2 节点。
+- `car_web` 启动时会按进程名清理残留的功能节点（相机、底盘串口、YOLO、事件记录、跟随、手势、钉钉、语音），停止导航时会清理 Cartographer/Nav2/rosbridge/explore。清理按名称匹配，手动启动的同名节点也会被结束，需要单独调试时不要同时运行 `car_web`。
 - 相机、底盘串口、8080 视频端口、YOLO 节点和 Nav2 栈都不建议重复启动。
 - 遥控和跟随测试前确认周围安全，必要时先架空轮子。
-- API Key、Webhook 等敏感配置提交前需要确认是否符合当前仓库的私有/公开策略。
+- API Key、Webhook 等敏感配置不写入代码，统一通过环境变量提供，不要提交到仓库。
