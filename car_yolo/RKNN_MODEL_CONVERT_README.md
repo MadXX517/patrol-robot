@@ -293,6 +293,8 @@ cat car_yolo/config/${MODEL}.names
 
 ## 7. 传到小车
 
+下面命令中的 `192.168.0.102` 是开发时在路由器里按 MAC 绑定的小车 IP，更换路由器后需重新绑定或替换为实际 IP，见 [根 README](../README.md#快速开始)。
+
 单个模型传输：
 
 ```bash

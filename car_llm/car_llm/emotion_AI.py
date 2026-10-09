@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+import os
+
 from openai import OpenAI
 
-# 初始化客户端
+# 初始化客户端(API Key 从环境变量读取,请提前 export DASHSCOPE_API_KEY=...)
 client = OpenAI(
-    api_key="sk-a07b9af862154c89a34741c80db78f7a",  # 请提前 export DASHSCOPE_API_KEY=...
+    api_key=os.environ.get("DASHSCOPE_API_KEY"),
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 

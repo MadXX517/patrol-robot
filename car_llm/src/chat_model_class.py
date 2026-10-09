@@ -157,8 +157,8 @@ class LLMCommandParser():
 
 # 示例使用.
 if __name__ == '__main__':
-    parser = LLMCommandParser(api_key="sk-a07b9af862154c89a34741c80db78f7a",model="qwen-flash") # max比turbo慢三倍，turbo不再更新，建议使用flash
-    # parser = LLMCommandParser(api_key="048d77d4-f25c-4255-90d8-299cef2c2fb3",base_url="https://ark.cn-beijing.volces.com/api/v3",model="doubao-1-5-lite-32k-250115")
+    parser = LLMCommandParser(api_key=os.environ.get("DASHSCOPE_API_KEY"),model="qwen-flash") # max比turbo慢三倍，turbo不再更新，建议使用flash
+    # parser = LLMCommandParser(api_key=os.environ.get("ARK_API_KEY"),base_url="https://ark.cn-beijing.volces.com/api/v3",model="doubao-1-5-lite-32k-250115")
 
     # user_input = "你好小甲，下午好，将红色物块搬运到绿色物块上方，然后机械臂移动到位置(0.2,0.2,0.1)处，夹爪开合一次，第一个关节向左旋转30度。"
     # user_input = "你好小甲，抓取红色的物块"

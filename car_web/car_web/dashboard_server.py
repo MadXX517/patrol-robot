@@ -33,10 +33,8 @@ EVENT_TOPIC = '/car_report/event'
 # 语音栏可选音色(qwen-tts);白名单用于校验 set_voice_params。
 TTS_VOICES = ['Serena', 'Neil', 'Cherry', 'Ethan', 'Chelsie', 'Dylan', 'Jada', 'Sunny']
 # 钉钉自定义机器人 webhook(与 car_report/car_notify 同一个),供紧急报警推送。
-DINGTALK_WEBHOOK_URL = (
-    'https://oapi.dingtalk.com/robot/send?'
-    'access_token=a6d04355c1119b47c1db727a3e3b54e58eb8dd36456313569b3db5f78c2e3c93'
-)
+# 从环境变量 DINGTALK_WEBHOOK_URL 读取,不在代码中保存 token;为空时跳过钉钉推送。
+DINGTALK_WEBHOOK_URL = os.environ.get('DINGTALK_WEBHOOK_URL', '')
 # 紧急报警:先播语音警告、过 SIREN_PRE_ROLL 秒再起警笛,避免二者同灌喇叭盖掉语音。
 SIREN_PRE_ROLL_SEC = 6.0
 CMD_VEL_TOPIC = '/cmd_vel'
@@ -789,6 +787,9 @@ class DashboardNode(Node):
 
     def _send_emergency_dingtalk(self, when, location, image_path):
         """发紧急增援文字到钉钉(现场图在控制台看)。失败不阻断报警。"""
+        if not DINGTALK_WEBHOOK_URL:
+            self.get_logger().warn('DINGTALK_WEBHOOK_URL 未设置,跳过钉钉紧急推送')
+            return False
         try:
             import urllib.request
             kw = '巡逻告警'

@@ -4,6 +4,7 @@ import voice2text_class,chat_model_class,text2voice_class
 import time
 import aibox_tty
 import sys
+import os
 import argparse
 
 # 是否接入机器人控制(机械臂/底盘)。第一阶段默认关闭,只做语音对话。
@@ -103,7 +104,8 @@ def ros_control_process(ros_control_queue,tts_queue):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='LLM Main Program')
-    parser.add_argument('--api_key', type=str, default="sk-a07b9af862154c89a34741c80db78f7a")
+    # API Key 默认从环境变量 DASHSCOPE_API_KEY 读取,也可用 --api_key 显式传入
+    parser.add_argument('--api_key', type=str, default=os.environ.get('DASHSCOPE_API_KEY', ''))
     parser.add_argument('--base_url', type=str, default="https://dashscope.aliyuncs.com/compatible-mode/v1")
     parser.add_argument('--yaml_file', type=str, default="chat_prompt_car.yaml")
     parser.add_argument('--aibox_serial_port', type=str, default='/dev/aibox')

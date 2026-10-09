@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, ExecuteProcess, RegisterEventHandler
 from launch.event_handlers import OnProcessStart, OnProcessExit
-from launch.substitutions import PathJoinSubstitution, LaunchConfiguration
+from launch.substitutions import PathJoinSubstitution, LaunchConfiguration, EnvironmentVariable
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument, TimerAction, LogInfo
@@ -12,7 +12,7 @@ def generate_launch_description():
     # ============================ 通用参数 ============================ #
     api_key_arg = DeclareLaunchArgument(
         'api_key', # 要求语音转文字模型、视觉理解模型、语言大模型、文字转语音模型都是同一家提供，一个api_key支持所有多模态大模型
-        default_value='sk-005d95b21722404e9bb7e63ef4f9ed64', # 记得替换api key
+        default_value=EnvironmentVariable('DASHSCOPE_API_KEY', default_value=''), # 默认读取环境变量 DASHSCOPE_API_KEY
         description='API Key for LLM service'
     )
 

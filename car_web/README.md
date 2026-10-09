@@ -49,6 +49,9 @@ http://RK3588_IP:8000
 http://192.168.0.102:8000
 ```
 
+`192.168.0.102` 是开发时在路由器里按 MAC 绑定的固定 IP，更换路由器后需要重新绑定，详见 [根 README](../README.md#快速开始)。
+
+
 ## 模块单独测试
 
 如果网页内嵌画面没有图，先点页面里的“打开视频直链”和“视频服务首页”。如果直链也没有图，再关掉 `car_web` 或点击“全部停止”，按模块拆开测试。
@@ -106,7 +109,7 @@ ros2 topic echo /car_yolo/object_detect
 ros2 topic echo /car_report/event
 ```
 
-API 和 webhook 单测：
+API 和 webhook 单测（需先设置环境变量 `DASHSCOPE_API_KEY`、`DINGTALK_WEBHOOK_URL`，网页的紧急报警推送也读取 `DINGTALK_WEBHOOK_URL`）：
 
 ```bash
 ros2 run car_report report_generator --api-test
@@ -213,7 +216,7 @@ ros2 launch car_notify dingtalk_notify.launch.py
 ros2 run web_video_server web_video_server
 ```
 
-`car_web` 只停止它自己启动的进程，不会主动杀掉你手动启动的其他 ROS2 节点。如果你已经手动启动过冲突节点，建议先关掉相关终端，再重新启动 `car_web`。
+`car_web` 启动时会按进程名清理残留的功能节点（相机、底盘串口、YOLO、事件记录、跟随、手势、钉钉、语音），停止导航时会清理 Cartographer/Nav2/rosbridge/explore。清理按名称匹配，手动启动的同名节点也会被结束；需要单独调试某个模块时，先关闭 `car_web`。
 
 ## 常用排查
 
